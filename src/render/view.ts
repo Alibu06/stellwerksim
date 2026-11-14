@@ -114,14 +114,23 @@ export class View {
   // Gleichmäßige Aufteilung auf n Zeilen
   autoRows(n: number) {
     const xmin = Math.min(...this.g.nodes.map((n) => n.x)), xmax = Math.max(...this.g.nodes.map((n) => n.x));
-    const total = this.W(xmax) - this.W(xmin);
+    // Umbruchstellen so wählen, dass die breiteste Zeile möglichst schmal wird
+    const pts = [xmin, ...this.candidates.filter((c) => c > xmin && c < xmax), xmax];
+    const w = pts.map((x) => this.W(x));
+    const m = pts.length;
+    const rows = Math.min(n, m - 1);
+    const best: number[][] = Array.from({ length: rows + 1 }, () => Array(m).fill(Infinity));
+    const from: number[][] = Array.from({ length: rows + 1 }, () => Array(m).fill(-1));
+    best[0][0] = 0;
+    for (let r = 1; r <= rows; r++)
+      for (let j = 1; j < m; j++)
+        for (let i = 0; i < j; i++) {
+          const v = Math.max(best[r - 1][i], w[j] - w[i]);
+          if (v < best[r][j]) { best[r][j] = v; from[r][j] = i; }
+        }
     const br: number[] = [];
-    for (let k = 1; k < n; k++) {
-      const target = this.W(xmin) + (total * k) / n;
-      let best = this.candidates[0];
-      for (const c of this.candidates) if (Math.abs(this.W(c) - target) < Math.abs(this.W(best) - target)) best = c;
-      if (!br.includes(best)) br.push(best);
-    }
+    let j = m - 1;
+    for (let r = rows; r > 1; r--) { j = from[r][j]; br.push(pts[j]); }
     this.setBreaks(br);
   }
 
@@ -368,7 +377,7 @@ export class View {
         ctx.font = this.mono(7.5);
         ctx.fillStyle = COLORS.textDim;
         ctx.textAlign = "center";
-        ctx.fillText(n.swName ?? "", p.x, p.y + (n.swSide > 0 ? -6 : 12) * this.k);
+        ctx.fillText((n.swName ?? "").replace(/^[A-Z]{2} /, ""), p.x, p.y + (n.swSide > 0 ? -6 : 12) * this.k);
       }
     }
   }

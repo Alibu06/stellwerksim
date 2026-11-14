@@ -207,6 +207,19 @@ export class Interlocking {
     }
   }
 
+  // Zug endet oder wendet: Rest seiner befahrenen Fahrstraßen auflösen
+  releaseTrain(trainId: number) {
+    for (const r of [...this.routes.values()]) {
+      if (r.train !== trainId || !r.used) continue;
+      for (const e of r.path.edges) if (this.g.edges[e].lock === r.id && !this.g.edges[e].occ) {
+        this.g.edges[e].lock = 0;
+        r.remaining.delete(e);
+      }
+      this.releaseOverlap(r);
+      if (r.remaining.size === 0) this.routes.delete(r.id);
+    }
+  }
+
   // Wenn der Zug am Zielsignal steht, wird der Durchrutschweg nach kurzer Zeit aufgelöst
   releaseOverlapForTrain(trainId: number) {
     for (const r of this.routes.values()) if (r.train === trainId && r.overlap.length) this.releaseOverlap(r);

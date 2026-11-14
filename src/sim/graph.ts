@@ -7,6 +7,7 @@ export interface GNode {
   id: number;
   x: number;
   y: number;
+  s?: number; // Streckenmeter
   east: number[]; // Kanten Richtung Ost
   west: number[]; // Kanten Richtung West
   portal?: string; // Streckenende zur Außenwelt
@@ -53,7 +54,7 @@ export interface Graph {
   nodes: GNode[];
   edges: GEdge[];
   signals: Signal[];
-  stations: Record<string, { name: string; x: number; y: number }>;
+  stations: Record<string, { name: string; x: number; y: number; s?: number }>;
   portals: Record<string, { inNode: number; outNode: number; dir: Dir; label: string }>; // dir = Fahrtrichtung einfahrender Züge
   labels: { x: number; y: number; text: string; size?: number }[];
   breakpoints: number[]; // mögliche Zeilenumbrüche (x)

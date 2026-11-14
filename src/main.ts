@@ -49,11 +49,11 @@ async function boot() {
   // Zeileneinteilung (im Browser gemerkt)
   let rows = 4;
   try {
-    const saved = JSON.parse(localStorage.getItem("stellwerk-layout") ?? "null");
+    const saved = JSON.parse(localStorage.getItem("stellwerk-layout-v3") ?? "null");
     if (saved?.breaks) { view.setBreaks(saved.breaks.filter((x: number) => view.candidates.includes(x))); rows = view.breaks.length + 1; }
     else view.autoRows(rows);
   } catch { view.autoRows(rows); }
-  const saveLayout = () => { try { localStorage.setItem("stellwerk-layout", JSON.stringify({ breaks: view.breaks })); } catch { /* egal */ } };
+  const saveLayout = () => { try { localStorage.setItem("stellwerk-layout-v3", JSON.stringify({ breaks: view.breaks })); } catch { /* egal */ } };
   const markRows = () => document.querySelectorAll<HTMLButtonElement>("#rows button[data-r]").forEach((b) => b.classList.toggle("on", Number(b.dataset.r) === view.breaks.length + 1));
   requestAnimationFrame(() => { view.fit(); markRows(); });
   document.querySelectorAll<HTMLButtonElement>("#rows button[data-r]").forEach((b) => (b.onclick = () => {

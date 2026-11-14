@@ -87,6 +87,7 @@ export class World {
   constructor(public g: Graph, trips: TripSpec[], startTime: number) {
     this.il = new Interlocking(g);
     this.time = startTime;
+    this.findSingleTracks();
     // Züge, deren Fahrt bei Spielbeginn schon vorbei ist, entfallen; Wendezüge werden vom Vorgänger übernommen
     this.pending = trips.filter((t) => !t.turnedFrom && t.entryTime + t.initialDelay >= startTime - 60);
   }
@@ -472,6 +473,7 @@ export class World {
       else if (!t.trip.turnInto && this.time >= t.dissolveAt) {
         for (const e of t.body) this.vacate(e);
         t.body = [];
+        this.il.releaseTrain(t.id);
         this.finish(t, false);
       }
       return;
@@ -497,6 +499,7 @@ export class World {
     }
     const flip = next.dir !== t.dir;
     if (flip) {
+      this.il.releaseTrain(t.id);
       t.body.reverse();
       t.headPos = first.len - Math.max(0, tailPos);
       t.dir = (t.dir * -1) as Dir;
@@ -606,8 +609,74 @@ export class World {
     return bestCost < 1e8 ? best : null;
   }
 
+  // ---------------- Eingleisige Abschnitte (Kreuzungslogik der Zuglenkung) ----------------
+  singles: { edges: Set<number>; gates: Map<number, Dir> }[] = [];
+
+  private findSingleTracks() {
+    const g = this.g;
+    const isS = (e: number) => !Number.isInteger(g.nodes[g.edges[e].a].y) && !Number.isInteger(g.nodes[g.edges[e].b].y);
+    const seen = new Set<number>();
+    for (const e0 of g.edges) {
+      if (seen.has(e0.id) || !isS(e0.id)) continue;
+      const set = new Set<number>(), stack = [e0.id];
+      while (stack.length) {
+        const e = stack.pop()!;
+        if (set.has(e)) continue;
+        set.add(e); seen.add(e);
+        for (const n of [g.edges[e].a, g.edges[e].b]) for (const x of [...g.nodes[n].east, ...g.nodes[n].west]) if (isS(x) && !set.has(x)) stack.push(x);
+      }
+      const gates = new Map<number, Dir>();
+      for (const [sid, paths] of this.il.paths) {
+        const sg = this.il.sig(sid);
+        if (set.has(this.edgeBehind(sg))) continue; // Signal liegt selbst im Abschnitt
+        if (paths.some((p) => p.edges.some((x) => set.has(x)))) gates.set(sid, sg.dir);
+      }
+      this.singles.push({ edges: set, gates });
+    }
+  }
+
+  // Kante, über die ein Zug an das Signal heranfährt
+  private edgeBehind(sg: { node: number; dir: Dir }): number {
+    const n = this.g.nodes[sg.node];
+    const arr = sg.dir > 0 ? n.west : n.east;
+    return arr.length === 1 ? arr[0] : -1;
+  }
+
+  // Würde der Zug mit diesem Fahrweg vor einem eingleisigen Abschnitt warten, in dem ein Gegenzug
+  // unterwegs ist, und dabei das letzte freie Gleis für den Gegenzug zustellen?
+  private crossingBlocked(t: Train, p: PathDef): boolean {
+    if (!p.endSig) return false;
+    for (const S of this.singles) {
+      if (S.gates.get(p.endSig) !== t.dir) continue;
+      let opposing = false;
+      for (const e of S.edges) {
+        const E = this.g.edges[e];
+        if (E.occ) {
+          const tr = this.trains.find((x) => x.body.includes(e));
+          if (tr && tr.dir !== t.dir) opposing = true;
+        }
+        if (E.lock) {
+          const r = this.il.routes.get(E.lock);
+          if (r && r.path.dir !== t.dir) opposing = true;
+        }
+      }
+      if (!opposing) return false;
+      let free = 0;
+      for (const [sid, d] of S.gates) {
+        if (d !== t.dir) continue;
+        const eb = this.edgeBehind(this.il.sig(sid));
+        if (eb < 0) continue;
+        const E = this.g.edges[eb];
+        if (!E.occ && !E.lock && !E.overlap) free++;
+      }
+      return free < 2;
+    }
+    return false;
+  }
+
   // Zug soll auf eingleisige Strecke ausfahren, deren Streckengleis noch vom Gegenzug belegt ist
   private singleTrackBlocked(t: Train, p: PathDef): boolean {
+    if (this.crossingBlocked(t, p)) return true;
     const ex = t.trip.exitPortal;
     if (!ex) return false;
     const P = this.g.portals[ex];

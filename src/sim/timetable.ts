@@ -77,8 +77,12 @@ const VEHICLE: Record<Cat, { len: number; vmax: number; acc: number; dec: number
 
 function portalFor(line: string, cat: Cat, side: "W" | "E"): string {
   if (cat === "ICE") return side === "W" ? "W_SFS" : "E_SFS";
+  if (line === "S19") return side === "W" ? "W_FL" : "E_BZ";
   if (cat === "S") return side === "W" ? "W_S" : "E_BZ";
   if (line === "RB90") return side === "W" ? "WW" : "E_BZ";
+  if (line === "RB96") return side === "W" ? "W_S" : "E_HT";
+  if (line === "RB97") return side === "W" ? "W_S" : "E_DT";
+  if (line.startsWith("RE9") || line === "RE99") return side === "W" ? "W_S" : "E_BZ";
   return side === "W" ? "W_M" : "E_BZ";
 }
 
@@ -86,8 +90,7 @@ function portalFor(line: string, cat: Cat, side: "W" | "E"): string {
 function approachTime(g: Graph, portal: string, st: string, vmax: number): number {
   const p = g.portals[portal], s = g.stations[st];
   const n = g.nodes[p.inNode];
-  // Schematische Distanz grob in Meter umrechnen
-  const dist = Math.abs(n.x - s.x) * 160;
+  const dist = Math.abs((n.s ?? n.x * 160) - (s.s ?? s.x * 160));
   const v = Math.min(vmax, 120) / 3.6 * 0.75;
   return Math.max(120, Math.round(dist / v) + 60);
 }
