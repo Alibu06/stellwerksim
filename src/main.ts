@@ -25,6 +25,8 @@ const CAT_COLOR = VIEW_CAT;
 async function boot() {
   const raw: RawTimetable = await (await fetch(`${import.meta.env.BASE_URL}data/timetable.json`)).json();
   const g = buildCorridor();
+  let trackPlan: Record<string, string> | undefined;
+  try { trackPlan = await (await fetch(`${import.meta.env.BASE_URL}data/tracks.json`)).json(); } catch { /* ohne Regelgleise */ }
 
   $("areaPick").innerHTML = AREAS.map(([c, n]) => `<label><input type="checkbox" value="${c}" ${DEFAULT_MANUAL.has(c) ? "checked" : ""}> ${n}</label>`).join("");
   let savedF: Partial<Features> = {};
@@ -58,6 +60,7 @@ async function boot() {
   if (!feats.vorbereich) for (const t of trips) t.initialDelay = 0;
   const w = new World(g, trips, resume && save ? save.time : startHour * 3600 - 120 * 60);
   w.faultRate = 0;
+  w.trackPlan = trackPlan;
   w.zugmeldung = feats.zugmeldung;
   w.ext.start({ ...feats, ereignisse: false, faults: 0 }, startHour * 3600);
   const applyAreas = () => {
@@ -476,7 +479,7 @@ async function boot() {
         <div><b>${sc.trainsDone ? pct + " %" : "–"}</b><small>pünktlich (unter 6 min)</small></div>
         <div><b>${Math.round(sc.waitMinutes)}</b><small>Minuten vor Halt zeigenden Signalen</small></div>
         <div><b>${w.faultCount}</b><small>Störungen und Ereignisse</small></div>
-        <div><b>${sc.missedStops}</b><small>verpasste Halte</small></div>
+        <div><b>${sc.missedStops} / ${sc.trackChanges ?? 0}</b><small>verpasste Halte / Gleisänderungen</small></div>
         <div><b>${sc.incidents}</b><small>gefährliche Ereignisse</small></div>
         <div><b>${Math.round(ownMin)} / ${Math.round(extMin)}</b><small>Wartemin. selbst / fremd verursacht</small></div>
       </div>

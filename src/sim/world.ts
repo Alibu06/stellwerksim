@@ -8,6 +8,8 @@ export interface StopState extends TTStop {
   missed?: boolean;
   actArr?: number;
   actDep?: number;
+  plan?: string; // Regelgleis laut Fahrplan
+  track?: string; // tatsächlich benutztes Gleis
 }
 
 export interface Train {
@@ -92,6 +94,7 @@ export interface Score {
   causes: Record<string, number>; // Verspätungsminuten nach Ursache (abgeschlossene Fahrten)
   delayMin: number; // selbst verursachte Verspätungsminuten
   late: { no: string; min: number; cause: string }[];
+  trackChanges?: number;
 }
 
 const DT = 0.5;
@@ -187,7 +190,7 @@ export class World {
     const t: Train = {
       id: this.nextTrainId++, trip, no: trip.no, cat: trip.cat, len: trip.len, vmax: trip.vmax / 3.6,
       acc: trip.acc, dec: trip.dec, v: 0, dir: trip.dir, body, headPos,
-      stops: trip.stops.map((s) => ({ ...s, done: false })), stopIdx: 0, dwellUntil: 0, dwelling: false,
+      stops: trip.stops.map((s) => ({ ...s, done: false, plan: this.planTrack(s.st, trip.dir, trip.line, trip.to) })), stopIdx: 0, dwellUntil: 0, dwelling: false,
       exiting: false, gone: false, delay: trip.initialDelay, delayIn: trip.initialDelay, nextSig: 0, distNextSig: Infinity,
       stopAheadIsPlatform: false, waitRed: 0, standStill: 0, reverseAt: 0, dissolveAt: 0, faultUntil: 0, sight: false, hold: false, causes: trip.initialDelay > 60 ? { "Verspätung aus dem Vorbereich": trip.initialDelay } : {}, extraDwell: 0, radio: [], ...this.crew(trip),
     };
@@ -229,6 +232,21 @@ export class World {
     const t = this.newTrain(trip, [e.id], e.len - 15);
     this.arrive(t, true);
     return true;
+  }
+
+  // Regelgleis eines Bahnhofs je Fahrtrichtung (durchgehendes Hauptgleis mit Bahnsteig, sonst kleinste Gleisnummer)
+  private planCache = new Map<string, string | undefined>();
+  trackPlan?: Record<string, string>; // Regelgleise je Linie|Richtung|Bahnhof (aus data/tracks.json)
+  planTrack(st: string, dir: Dir, line = "", to = ""): string | undefined {
+    if (this.trackPlan) return this.trackPlan[`${line}|${dir}|${st}|${to}`];
+    const k = `${st}${dir}`;
+    if (this.planCache.has(k)) return this.planCache.get(k);
+    const es = this.g.edges.filter((e) => e.platform?.st === st);
+    const num = (x: string) => parseInt(x, 10) || 99;
+    const pick = (l: typeof es) => [...new Set(l.map((e) => e.platform!.track))].sort((a, b) => num(a) - num(b))[0];
+    const r = pick(es.filter((e) => e.pref === dir)) ?? pick(es.filter((e) => !e.pref)) ?? pick(es);
+    this.planCache.set(k, r);
+    return r;
   }
 
   private bestPlatformCost(st: string, trip: TripSpec): number {
@@ -503,6 +521,11 @@ export class World {
     t.v = 0;
     t.dwelling = true;
     s.actArr = startHere ? s.arr : this.time;
+    s.track = this.headEdge(t).platform?.track ?? this.g.edges[t.body[t.body.length - 1]].platform?.track;
+    if (!startHere && s.plan && s.track && s.track !== s.plan && t.cat !== "G" && this.manualAreas.has(s.st)) {
+      this.score.trackChanges = (this.score.trackChanges ?? 0) + 1;
+      this.log(`Gleisänderung: ${t.no} hält in ${this.g.stations[s.st].name} heute auf Gleis ${s.track} statt ${s.plan}`, "info");
+    }
     if (!startHere) t.delay = Math.max(0, this.time - s.arr);
     const minDwell = t.cat === "ICE" ? 90 : t.cat === "G" ? 0 : 30;
     t.dwellUntil = Math.max(this.time + minDwell + (t.cat !== "G" && this.ext.f.weather ? this.ext.weather.dwell : 0), s.dep);
@@ -574,7 +597,8 @@ export class World {
     }
     t.trip = next;
     t.no = next.no;
-    t.stops = next.stops.map((s) => ({ ...s, done: false }));
+    t.stops = next.stops.map((s) => ({ ...s, done: false, plan: this.planTrack(s.st, next.dir, next.line, next.to) }));
+    t.stops[0].track = this.headEdge(t).platform?.track;
     t.stopIdx = 0;
     const s0 = t.stops[0];
     s0.actArr = this.time;

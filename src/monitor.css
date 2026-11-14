@@ -37,3 +37,4 @@ select { background: #151d27; border: 1px solid var(--line); border-radius: 6px;
 .ev time { font-family: "JetBrains Mono", monospace; color: var(--dim); margin-right: 6px; }
 .fault { margin: 6px 12px; padding: 7px 9px; background: #221a0d; border: 1px solid #5c4313; border-radius: 6px; font-size: 12.5px; }
 .empty { color: var(--dim); font-size: 12px; margin: 4px 12px; }
+#boardTab .chg { color: #ffd23f; } #boardTab s { color: #8597ab; font-weight: 400; }

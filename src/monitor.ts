@@ -81,7 +81,7 @@ function renderBoard() {
     const via = (mode === "dep" ? t.stops.slice(i + 1, i + 4) : t.stops.slice(Math.max(0, i - 3), i)).map((x) => snap!.stations.find((y) => y.code === x.st)?.name ?? x.st).join(" – ");
     if (mode === "dep" && isLast && !t.to) continue;
     if (mode === "arr" && isFirst && !t.from) continue;
-    rows.push({ t, plan, prog, ist, via, track: s.track, done: s.done });
+    rows.push({ t, plan, prog, ist, via, track: s.track && s.plan && s.track !== s.plan ? `<s>${s.plan}</s> <b class="chg">${s.track}</b>` : s.track ?? s.plan, done: s.done });
   }
   rows.sort((a, b) => a.plan - b.plan);
   const now = snap!.time;

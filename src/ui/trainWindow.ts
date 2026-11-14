@@ -91,9 +91,10 @@ export class TrainWindow {
         const cls = (d: number) => (d >= 300 ? "bad" : d >= 60 ? "warn" : "ok");
         const ist = (x: number | undefined, d: number) => (x !== undefined ? `<span class="${cls(d)}">${hm(x)}</span>` : `<span class="${cls(d)} prog">${hm(s.arr + Math.max(0, d))}</span>`);
         return `<tr class="${s.done ? "done" : i === t.stopIdx ? "cur" : ""}"><td>${esc(g.stations[s.st].name)}${s.missed ? " ✕" : ""}</td>
-          <td>${hm(s.arr)}</td><td>${ist(s.actArr, dArr)}</td><td>${hm(s.dep)}</td><td>${s.actDep !== undefined ? `<span class="${cls(dDep)}">${hm(s.actDep)}</span>` : `<span class="${cls(dDep)} prog">${hm(s.dep + Math.max(0, dDep))}</span>`}</td></tr>`;
+          <td>${hm(s.arr)}</td><td>${ist(s.actArr, dArr)}</td><td>${hm(s.dep)}</td><td>${s.actDep !== undefined ? `<span class="${cls(dDep)}">${hm(s.actDep)}</span>` : `<span class="${cls(dDep)} prog">${hm(s.dep + Math.max(0, dDep))}</span>`}</td>
+          <td>${s.track && s.plan && s.track !== s.plan ? `<s>${s.plan}</s> <span class="warn">${s.track}</span>` : s.track ?? s.plan ?? ""}</td></tr>`;
       }).join("");
-      body = rows ? `<table class="plan"><tr><th>Halt</th><th>an Soll</th><th>an Ist/Prog</th><th>ab Soll</th><th>ab Ist/Prog</th></tr>${rows}</table>
+      body = rows ? `<table class="plan"><tr><th>Halt</th><th>an Soll</th><th>an Ist/Prog</th><th>ab Soll</th><th>ab Ist/Prog</th><th>Gl.</th></tr>${rows}</table>
         <p class="hint">Kursiv = Prognose. Grün pünktlich, gelb ab 1 min, rot ab 5 min.</p>` : `<p class="hint">Güterzug ohne Verkehrshalt im Bereich.</p>`;
     } else if (this.tab === "fis") {
       body = this.fis(t);
@@ -136,9 +137,10 @@ export class TrainWindow {
     const ticker = dm >= 3 ? `Wir haben derzeit eine Verspätung von ${dm} Minuten${reason ? `. Grund: ${reason.replace(/^Halt vor Signal.*/, "Verzögerungen im Betriebsablauf")}` : ""}. Wir bitten um Entschuldigung.`
       : t.dwelling ? "Bitte beachten Sie beim Aussteigen die Lücke zwischen Zug und Bahnsteig." : "Willkommen an Bord. Fahrscheine bitte bereithalten.";
     const isLast = !t.trip.exitPortal && rest.length <= 1;
+    const chg = next && next.track && next.plan && next.track !== next.plan ? next.track : undefined;
     return `<div class="fisbox">
       <div class="fistop"><span class="fisline" style="background:${this.catColor[t.cat]}">${esc(t.trip.line)}</span><span class="fisdest">${esc(t.trip.to)}</span><span class="fisclock">${hm(w.time)}</span></div>
-      ${next ? `<div class="fisnext"><small>${t.dwelling ? "Halt" : "Nächster Halt"}</small><div>${esc(g.stations[next.st].name)}</div><small>${hm(next.arr)}${dm > 0 ? ` <span class="fisdelay">+${dm}</span>` : ""}${isLast ? " · Endstation, bitte alle aussteigen" : ""}</small></div>` : `<div class="fisnext"><small>Endstation</small><div>${esc(t.trip.to)}</div><small>Bitte alle aussteigen. Vielen Dank für Ihre Fahrt.</small></div>`}
+      ${next ? `<div class="fisnext"><small>${t.dwelling ? "Halt" : "Nächster Halt"}</small><div>${esc(g.stations[next.st].name)}</div><small>${hm(next.arr)}${dm > 0 ? ` <span class="fisdelay">+${dm}</span>` : ""}${next.plan ? ` · Gleis ${chg ? `<span class="fisdelay">${chg}</span> (Gleisänderung)` : next.plan}` : ""}${isLast ? " · Endstation, bitte alle aussteigen" : ""}</small></div>` : `<div class="fisnext"><small>Endstation</small><div>${esc(t.trip.to)}</div><small>Bitte alle aussteigen. Vielen Dank für Ihre Fahrt.</small></div>`}
       <div class="fislist">${rest.slice(1, 6).map((s) => `<div><span>${esc(g.stations[s.st].name)}</span><span>${hm(s.arr)}</span></div>`).join("")}${t.trip.exitPortal ? `<div class="dim"><span>${esc(t.trip.to)}</span><span></span></div>` : ""}</div>
       <div class="fisticker"><span>${esc(ticker)}</span></div>
     </div>`;
