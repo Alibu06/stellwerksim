@@ -24,6 +24,8 @@
         <button id="fitBtn" title="Ganze Strecke einpassen">⤢</button>
       </div>
       <div class="speed"><button id="monBtn" title="Fahrplanmonitor, Zugmeldungen und Bildfahrplan in einem eigenen Fenster (zweiter Bildschirm)">🖥 Zweiter Monitor</button></div>
+      <div class="wx" id="wx" title="Wetter"></div>
+      <div class="speed"><button id="endBtn" title="Schicht auswerten">🏁 Schichtbericht</button></div>
       <div class="stats">
         <div><span id="pts">0</span><small>Punkte</small></div>
         <div><span id="punct">–</span><small>pünktlich</small></div>
@@ -70,6 +72,7 @@
       <div id="toast"></div>
       <div id="card" class="hidden"></div>
     </main>
+    <div id="report" class="hidden"></div>
     <div id="start">
       <div class="panel">
         <h1><span class="logo">◆</span> Stellwerk Sieg</h1>
@@ -91,6 +94,8 @@
             <option value="2">häufig</option>
           </select>
         </label>
+        <p class="hint">Funktionen (jede einzeln abschaltbar):</p>
+        <div id="featPick" class="feats"></div>
         <p class="hint">Wähle, welche Bahnhöfe du selbst stellst. Der Rest läuft über die automatische Zuglenkung.</p>
         <div id="areaPick" class="areas"></div>
         <button id="go">Dienst beginnen</button>

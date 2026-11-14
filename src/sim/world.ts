@@ -1,3 +1,4 @@
+import { Extras } from "./extras";
 import { Dir, Graph, nextEdge, otherEnd, trailingOk, vEdge } from "./graph";
 import { Interlocking, PathDef } from "./interlocking";
 import { Cat, TripSpec, TTStop, rng } from "./timetable";
@@ -45,6 +46,7 @@ export interface Train {
   reason?: string; // vom Fahrdienstleiter eingetragene Verspätungsursache
   reasonNote?: string;
   extraDwell: number; // Anschluss abwarten (Sekunden, beim nächsten Halt)
+  holdFor?: { st: string; sec: number }; // Anschluss abwarten an bestimmtem Bahnhof (Disposition)
   driver: string; // Name Triebfahrzeugführer/in
   tfz: string; // Baureihe
   radio: { t: number; from: "fdl" | "tf"; text: string }[];
@@ -52,7 +54,7 @@ export interface Train {
 
 export interface Fault {
   id: number;
-  kind: "switch" | "signal" | "door" | "vehicle";
+  kind: "switch" | "signal" | "door" | "vehicle" | "bue" | "event";
   target: number; // Knoten-, Signal- oder Zug-ID
   until: number;
   text: string;
@@ -87,6 +89,9 @@ export interface Score {
   waitMinutes: number;
   missedStops: number;
   incidents: number;
+  causes: Record<string, number>; // Verspätungsminuten nach Ursache (abgeschlossene Fahrten)
+  delayMin: number; // selbst verursachte Verspätungsminuten
+  late: { no: string; min: number; cause: string }[];
 }
 
 const DT = 0.5;
@@ -100,7 +105,7 @@ export class World {
   trains: Train[] = [];
   time: number;
   events: GameEvent[] = [];
-  score: Score = { points: 0, trainsDone: 0, punctual: 0, waitMinutes: 0, missedStops: 0, incidents: 0 };
+  score: Score = { points: 0, trainsDone: 0, punctual: 0, waitMinutes: 0, missedStops: 0, incidents: 0, causes: {}, delayMin: 0, late: [] };
   private pending: TripSpec[];
   private nextTrainId = 1;
   private acc = 0;
@@ -115,11 +120,14 @@ export class World {
   private reportId = 1;
   zugmeldung = true; // Funktion an/aus
   manualAreas = new Set<string>(); // Bahnhöfe, die der Spieler stellt
+  ext: Extras;
+  connAlerts: { id: number; feeder: number; conn: number; st: string; t: number; wait: number }[] = [];
 
   constructor(public g: Graph, trips: TripSpec[], startTime: number) {
     this.il = new Interlocking(g);
     this.time = startTime;
     this.findSingleTracks();
+    this.ext = new Extras(this);
     // Züge, deren Fahrt bei Spielbeginn schon vorbei ist, entfallen; Wendezüge werden vom Vorgänger übernommen
     this.pending = trips.filter((t) => !t.turnedFrom && t.entryTime + t.initialDelay >= startTime - 60);
   }
@@ -143,6 +151,7 @@ export class World {
   step(dt: number) {
     this.time += dt;
     if (this.zugmeldung) this.reportsTick();
+    this.ext.step(dt);
     this.spawn();
     for (const t of this.trains) this.drive(t, dt);
     this.trains = this.trains.filter((t) => !t.gone);
@@ -182,6 +191,7 @@ export class World {
       exiting: false, gone: false, delay: trip.initialDelay, delayIn: trip.initialDelay, nextSig: 0, distNextSig: Infinity,
       stopAheadIsPlatform: false, waitRed: 0, standStill: 0, reverseAt: 0, dissolveAt: 0, faultUntil: 0, sight: false, hold: false, causes: trip.initialDelay > 60 ? { "Verspätung aus dem Vorbereich": trip.initialDelay } : {}, extraDwell: 0, radio: [], ...this.crew(trip),
     };
+    this.ext.applyPerf(t);
     for (const e of body) this.g.edges[e].occ++;
     this.trains.push(t);
     return t;
@@ -273,6 +283,16 @@ export class World {
     }
     let d = head.len - t.headPos;
     let eid = head.id;
+    const pts = (e: number, entry: number, base: number) => {
+      const L = this.ext.pointsOn(e);
+      if (!L) return;
+      const s0 = g.nodes[entry].s ?? 0;
+      for (const p of L) {
+        const dd = base + Math.abs(p.s - s0);
+        if (dd > -1) limits.push({ d: Math.max(0, dd), v: p.v });
+      }
+    };
+    { const ex = this.exitNode(t, head.id); pts(head.id, ex === head.a ? head.b : head.a, -t.headPos); }
     const horizon = Math.max(1500, (t.vmax * t.vmax) / (2 * t.dec) + 800);
     while (d < horizon && d < stopDist) {
       const n = this.exitNode(t, eid);
@@ -310,6 +330,7 @@ export class World {
         break;
       }
       const NE = g.edges[ne];
+      pts(ne, n, d);
       if (sight) {
         // Auf Sicht: vor besetztem Abschnitt anhalten
         if (NE.occ && !t.body.includes(ne)) {
@@ -484,13 +505,17 @@ export class World {
     s.actArr = startHere ? s.arr : this.time;
     if (!startHere) t.delay = Math.max(0, this.time - s.arr);
     const minDwell = t.cat === "ICE" ? 90 : t.cat === "G" ? 0 : 30;
-    t.dwellUntil = Math.max(this.time + minDwell, s.dep);
+    t.dwellUntil = Math.max(this.time + minDwell + (t.cat !== "G" && this.ext.f.weather ? this.ext.weather.dwell : 0), s.dep);
     if (!startHere && t.cat !== "G" && this.rand() < 0.02 * this.faultRate) {
       const extra = 120 + Math.floor(this.rand() * 300);
       t.dwellUntil += extra;
       t.fault = "Türstörung";
       t.faultUntil = t.dwellUntil;
       this.addFault("door", t.id, t.dwellUntil, `Türstörung an ${t.no} in ${this.g.stations[s.st].name}, ca. ${Math.round(extra / 60)} min`);
+    }
+    if (t.holdFor && t.holdFor.st === s.st && !startHere) {
+      t.extraDwell = Math.max(t.extraDwell, t.holdFor.sec);
+      t.holdFor = undefined;
     }
     if (t.extraDwell > 0 && !startHere) {
       t.dwellUntil = Math.max(t.dwellUntil, s.dep + t.extraDwell);
@@ -558,6 +583,8 @@ export class World {
     t.delayIn = Math.max(0, this.time + 30 - s0.dep);
     t.delay = t.delayIn;
     t.reverseAt = 0;
+    t.causes = {};
+    this.ext.applyPerf(t);
     this.il.releaseOverlapForTrain(t.id);
     this.log(`${next.turnedFrom?.no ?? ""} ${flip ? "wendet und fährt" : "fährt weiter"} als ${t.no} nach ${next.to}`, "info");
   }
@@ -565,6 +592,12 @@ export class World {
   private tripDone(t: Train) {
     this.score.trainsDone++;
     const caused = t.delay - t.delayIn;
+    for (const [k, v] of Object.entries(t.causes)) this.score.causes[k] = (this.score.causes[k] ?? 0) + v / 60;
+    if (caused > 0) this.score.delayMin += caused / 60;
+    if (t.delay >= 360) {
+      const top = Object.entries(t.causes).sort((a, b) => b[1] - a[1])[0];
+      this.score.late.push({ no: t.no, min: Math.round(t.delay / 60), cause: top ? top[0] : "unbekannt" });
+    }
     if (t.delay < 360 || caused < 120) {
       this.score.punctual++;
       this.score.points += 10;
@@ -866,7 +899,9 @@ export class World {
     return best;
   }
 
-  private addFault(kind: Fault["kind"], target: number, until: number, text: string) {
+  faultCount = 0;
+  addFault(kind: Fault["kind"], target: number, until: number, text: string) {
+    this.faultCount++;
     this.faults.push({ id: this.faultId++, kind, target, until, text });
     this.log(text, "warn");
   }
@@ -889,7 +924,8 @@ export class World {
     if (!this.faultRate) return;
     const r = this.rand, k = (10 / 60) * this.faultRate; // Anteil einer Minute
     // Weichenstörung: etwa alle 90 min
-    if (r() < k / 90) {
+    const W = this.ext.f.weather ? this.ext.weather : { sw: 1, sig: 1 };
+    if (r() < (k * W.sw) / 90) {
       const sws = this.g.nodes.filter((n) => n.swSide !== undefined && !this.il.faultySwitches.has(n.id));
       const n = sws[Math.floor(r() * sws.length)];
       const dur = 600 + Math.floor(r() * 900);
@@ -897,7 +933,7 @@ export class World {
       this.addFault("switch", n.id, this.time + dur, `Weichenstörung ${n.swName} (${this.nearStation(n.x)}): lässt sich nicht umstellen, Techniker ca. ${Math.round(dur / 60)} min`);
     }
     // Signalstörung: etwa alle 120 min
-    if (r() < k / 120) {
+    if (r() < (k * W.sig) / 120) {
       const sg = this.g.signals.filter((x) => !this.il.faultySignals.has(x.id));
       const s = sg[Math.floor(r() * sg.length)];
       const dur = 600 + Math.floor(r() * 1200);
@@ -988,6 +1024,31 @@ export class World {
     return null;
   }
 
+  // Anschluss halten: Abbringer wartet am Umsteigebahnhof
+  holdConnection(id: number): string | null {
+    const c = this.connAlerts.find((x) => x.id === id);
+    if (!c) return "Anschluss nicht mehr aktuell";
+    const b = this.trains.find((t) => t.id === c.conn);
+    if (!b) return "Zug ist nicht mehr im Bereich";
+    const sec = Math.min(20, Math.max(1, c.wait)) * 60;
+    const stop = b.stops[b.stopIdx];
+    if (b.dwelling && stop?.st === c.st) {
+      b.dwellUntil = Math.max(b.dwellUntil, stop.dep + sec);
+      this.cause(b, "Anschluss abgewartet (Disposition)", sec);
+    } else if (b.stops.some((s, i) => i >= b.stopIdx && s.st === c.st && !s.done)) b.holdFor = { st: c.st, sec };
+    else return `${b.no} ist schon abgefahren`;
+    this.connAlerts = this.connAlerts.filter((x) => x !== c);
+    this.log(`Disposition: ${b.no} wartet in ${this.g.stations[c.st].name} bis zu ${sec / 60} min auf den Anschluss`, "info");
+    return null;
+  }
+  dropConnection(id: number) {
+    const c = this.connAlerts.find((x) => x.id === id);
+    if (!c) return;
+    this.connAlerts = this.connAlerts.filter((x) => x !== c);
+    const b = this.trains.find((t) => t.id === c.conn);
+    this.log(`Disposition: Anschluss an ${b?.no ?? "?"} in ${this.g.stations[c.st].name} wird nicht gehalten`, "info");
+  }
+
   // ---------------- Zugpersonal, Position, Zustand ----------------
   private crew(trip: TripSpec): { driver: string; tfz: string } {
     const first = ["Anna", "Jonas", "Mehmet", "Sabine", "Lukas", "Elif", "Thomas", "Katharina", "Dirk", "Nadine", "Paul", "Olga", "Marco", "Julia", "Sven", "Aylin", "Frank", "Lea", "Bernd", "Mia"];
@@ -1065,6 +1126,7 @@ export class World {
     }
     if (t.sight) out.push({ text: "Fahrt auf Sicht (Ersatzsignal)", kind: "warn" });
     if (t.body.some((e) => this.g.edges[e].slow)) out.push({ text: `In Langsamfahrstelle ${Math.min(...t.body.map((e) => this.g.edges[e].slow ?? 999))} km/h`, kind: "warn" });
+    if (t.holdFor) out.push({ text: `Wartet in ${this.g.stations[t.holdFor.st].name} ${Math.round(t.holdFor.sec / 60)} min auf Anschluss`, kind: "info" });
     if (t.extraDwell) out.push({ text: `Wartet beim nächsten Halt ${Math.round(t.extraDwell / 60)} min auf Anschluss`, kind: "info" });
     if (ps && !t.dwelling) {
       out.push({ text: `Nächster Halt ${this.g.stations[ps.st].name} plan ${clock(ps.arr)}, erwartet ${clock(this.eta(t, ps))}`, kind: "info" });

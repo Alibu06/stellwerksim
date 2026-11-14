@@ -3,12 +3,14 @@ import { readFileSync } from "fs";
 import { buildCorridor } from "../src/data/corridor";
 import { buildTrips } from "../src/sim/timetable";
 import { World } from "../src/sim/world";
+import { DEFAULT_FEATURES } from "../src/sim/extras";
 
 const g = buildCorridor();
 const raw = JSON.parse(readFileSync(new URL("../public/data/timetable.json", import.meta.url), "utf8"));
 const trips = buildTrips(g, raw, 17);
 const start = Number(process.argv[2] ?? 5) * 3600, hours = Number(process.argv[3] ?? 4);
-const w = new World(g, trips, start); w.faultRate = Number(process.env.F ?? 1);
+const w = new World(g, trips, start); const ALL: string[] = []; const _log = w.log.bind(w); w.log = (t: string, k?: any) => { ALL.push(t); _log(t, k); }; w.faultRate = Number(process.env.F ?? 1);
+w.ext.start({ ...DEFAULT_FEATURES, faults: w.faultRate }, start);
 for (const s of g.signals) s.auto = true;
 console.log("Knoten", g.nodes.length, "Kanten", g.edges.length, "Signale", g.signals.length, "Fahrten", trips.length);
 const noPath = g.signals.filter((s) => !(w.il.paths.get(s.id)?.length));
@@ -24,3 +26,4 @@ while (w.time < start + hours * 3600) {
   }
 }
 for (const e of w.events.filter((e) => e.kind !== "info").slice(-25)) console.log(Math.floor(e.t / 3600) + ":" + String(Math.floor(e.t / 60) % 60).padStart(2, "0"), e.text);
+if (process.env.ALL) for (const t of ALL) if (/Wetter|Baustelle|Ereignis|Feuer|Personen|Baum|Pkw|Notarzt|Polizei|gestört|Anschluss|Disposition/.test(t)) console.log(t);

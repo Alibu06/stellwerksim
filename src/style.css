@@ -156,3 +156,30 @@ main { position: absolute; top: 52px; bottom: 0; left: 0; right: 0; }
 .rep small { color: var(--dim); }
 .rep.out { background: #111a24; border-color: var(--line); }
 .rep button { background: #1f6f3f; border: 1px solid #2fd27a; color: #fff; border-radius: 5px; padding: 6px 10px; font-size: 12px; font-weight: 600; }
+
+#start .panel { max-height: 94vh; overflow: auto; }
+.feats { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 14px; }
+.feats label { display: flex !important; gap: 6px; align-items: flex-start; font-size: 13px; cursor: pointer; }
+.feats label small { display: block; color: var(--dim); font-size: 11px; line-height: 1.3; }
+.wx { font-size: 13px; color: #cfe0f0; padding: 0 10px; white-space: nowrap; }
+.wx b { font-size: 16px; margin-right: 4px; }
+.site { margin: 8px 12px; padding: 8px 10px; background: #1a1a10; border: 1px solid #4d4a18; border-radius: 6px; line-height: 1.4; }
+.site.on { border-color: #b8a032; }
+.site small { color: var(--dim); display: block; margin-top: 2px; }
+.conn { margin: 8px 12px; padding: 8px 10px; background: #0f1a24; border: 1px solid #284a66; border-radius: 6px; line-height: 1.4; }
+.conn button { margin: 6px 6px 0 0; background: #15324a; border: 1px solid #2f6b99; color: #cfe7ff; border-radius: 5px; padding: 4px 8px; font-size: 12px; cursor: pointer; }
+.conn button.no { background: #2a1a1a; border-color: #6b3434; color: #ffcfcf; }
+#side h3 { margin: 14px 12px 4px; }
+#report { position: fixed; inset: 0; background: #000b; display: flex; align-items: center; justify-content: center; z-index: 20; }
+#report.hidden { display: none; }
+#report .panel { width: 760px; max-height: 90vh; overflow: auto; background: #0f161f; border: 1px solid #243244; border-radius: 14px; padding: 24px 28px; box-shadow: 0 20px 60px #000a; }
+#report h2 { margin: 0 0 4px; }
+#report .kpis { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin: 16px 0; }
+#report .kpis div { background: #151d27; border: 1px solid #243244; border-radius: 8px; padding: 10px; }
+#report .kpis b { display: block; font-size: 22px; }
+#report .kpis small { color: var(--dim); }
+#report .grade { font-size: 18px; margin: 8px 0; }
+#report table { width: 100%; border-collapse: collapse; font-size: 13px; }
+#report td { padding: 3px 6px; border-bottom: 1px solid #1c2633; }
+#report .bar { height: 10px; background: #e07a3f; border-radius: 3px; }
+#report button { margin-top: 16px; background: #1f6f4a; color: #fff; border: 0; border-radius: 6px; padding: 9px 16px; font-size: 14px; cursor: pointer; }

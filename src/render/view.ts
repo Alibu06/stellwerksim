@@ -198,6 +198,43 @@ export class View {
   }
 
   // ---------------- Zeichnen ----------------
+  // Bahnübergänge: kurzer Querstrich über alle Gleise, Farbe nach Zustand
+  private drawCrossings(ctx: CanvasRenderingContext2D) {
+    const ext = this.w.ext;
+    if (!ext.f.bue) return;
+    const blink = Math.floor(performance.now() / 500) % 2 === 0;
+    for (const c of ext.crossings) {
+      const pts: { x: number; y: number }[] = [];
+      for (const id of c.edges) {
+        const e = this.g.edges[id];
+        const A = this.g.nodes[e.a], B = this.g.nodes[e.b];
+        const sa = A.s ?? 0, sb = B.s ?? 0;
+        if (sa === sb) continue;
+        const f = (c.s - sa) / (sb - sa);
+        const a = this.P(A.x + 1e-6, A.y), b = this.P(B.x - 1e-6, B.y);
+        if (Math.abs(a.y - b.y) > 80) continue;
+        pts.push({ x: a.x + (b.x - a.x) * f, y: a.y + (b.y - a.y) * f });
+      }
+      if (!pts.length) continue;
+      const x = pts.reduce((q, p) => q + p.x, 0) / pts.length;
+      const y0 = Math.min(...pts.map((p) => p.y)) - 9 * this.k, y1 = Math.max(...pts.map((p) => p.y)) + 9 * this.k;
+      const fault = c.faultUntil > 0 || c.blockedUntil > 0;
+      const col = fault ? (blink ? COLORS.fault : "#5a2a2a") : c.closed ? COLORS.yellow : "#8597ab";
+      ctx.strokeStyle = col;
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.moveTo(x - 3 * this.k, y0); ctx.lineTo(x - 3 * this.k, y1);
+      ctx.moveTo(x + 3 * this.k, y0); ctx.lineTo(x + 3 * this.k, y1);
+      ctx.stroke();
+      if (this.zoom > 0.55) {
+        ctx.font = this.mono(7, 700);
+        ctx.fillStyle = col;
+        ctx.textAlign = "center";
+        ctx.fillText("BÜ", x, y1 + 8 * this.k);
+      }
+    }
+  }
+
   draw(dt: number) {
     this.blink += dt;
     const c = this.canvas, ctx = c.getContext("2d")!;
@@ -214,6 +251,7 @@ export class View {
     this.drawLabels(ctx);
     this.drawPlatforms(ctx);
     this.drawTracks(ctx);
+    this.drawCrossings(ctx);
     this.drawTrainBodies(ctx);
     this.drawSwitches(ctx);
     this.drawDistants(ctx);
@@ -362,7 +400,7 @@ export class View {
         ctx.font = this.mono(8, 700);
         ctx.fillStyle = COLORS.yellow;
         ctx.textAlign = "center";
-        ctx.fillText(`La ${e.slow}`, (a.x + b.x) / 2, (a.y + b.y) / 2 - 8 * this.k);
+        if (Math.hypot(b.x - a.x, b.y - a.y) > 60 * this.k) ctx.fillText(`${e.work ? "Bau " : ""}La ${e.slow}`, (a.x + b.x) / 2, (a.y + b.y) / 2 - 8 * this.k);
       }
       if (e.closed) {
         ctx.strokeStyle = COLORS.fault;

@@ -38,6 +38,7 @@ export interface GEdge {
   overlap: number; // Durchrutschweg-ID oder 0
   slow?: number; // Langsamfahrstelle (km/h)
   closed?: boolean; // Gleis gesperrt
+  work?: boolean; // Baustelle
 }
 
 // zulässige Geschwindigkeit einer Kante unter Berücksichtigung von Langsamfahrstellen
