@@ -5,6 +5,7 @@ import { View, CAT_COLOR as VIEW_CAT } from "./render/view";
 import { TrainWindow } from "./ui/trainWindow";
 import { ContextMenu, MenuItem } from "./ui/contextMenu";
 import { radio } from "./sim/radio";
+import { CHANNEL, makeSnapshot } from "./sim/snapshot";
 
 const AREAS: [string, string][] = [
   ["TR", "Troisdorf"], ["SB", "Siegburg/Bonn"], ["HN", "Hennef (Sieg)"], ["BL", "Blankenberg (Sieg)"],
@@ -35,13 +36,16 @@ async function boot() {
   w.faultRate = 0;
   const applyAreas = () => {
     for (const s of g.signals) s.auto = s.kind === "block" || !manual.has(s.name.slice(0, 2));
+    w.manualAreas = new Set(manual);
   };
   applyAreas();
   // Vorlauf: 2 Stunden automatisch, damit beim Dienstbeginn schon Züge unterwegs sind
   const saved = g.signals.map((s) => s.auto);
   for (const s of g.signals) s.auto = true;
+  w.manualAreas = new Set();
   while (w.time < startHour * 3600) w.step(0.5);
   g.signals.forEach((s, i) => (s.auto = saved[i]));
+  w.manualAreas = new Set(manual);
   w.events = [];
   w.score = { points: 0, trainsDone: 0, punctual: 0, waitMinutes: 0, missedStops: 0, incidents: 0 };
   w.faultRate = faultRate;
@@ -287,6 +291,11 @@ async function boot() {
         <div class="no">${t.no}</div><div class="info">${where}${sigTxt}<br>${t.trip.from} → ${t.trip.to}</div>
         <div class="dl ${dm >= 6 ? "bad" : dm >= 3 ? "warn" : "ok"}">${dm > 0 ? "+" + dm : "0"}</div></div>`;
     }).join("");
+    $("tab-next").querySelectorAll<HTMLButtonElement>("[data-acc]").forEach((b) => (b.onclick = () => {
+      const why = w.acceptReport(Number(b.dataset.acc));
+      if (why) toast(why);
+      renderLists();
+    }));
     $("tab-trains").querySelectorAll<HTMLElement>(".row").forEach((r) => (r.onclick = () => {
       const t = w.trains.find((x) => x.id === Number(r.dataset.id));
       if (t) {
@@ -295,7 +304,16 @@ async function boot() {
         view.centerOn(g.nodes[e.a].x, g.nodes[e.a].y);
       }
     }));
-    $("tab-next").innerHTML = `<p>Züge, die in den nächsten Minuten in den Bereich einfahren oder bereitgestellt werden.</p>` +
+    const open = w.reports.filter((r) => r.kind === "in" && r.state === "offered");
+    const outs = w.reports.filter((r) => r.kind === "out" && r.state !== "accepted" && w.trains.some((t) => t.trip === r.trip));
+    $("repCount").textContent = open.length ? String(open.length) : "";
+    const repHtml = (open.length || outs.length ? `<h3>Zugmeldungen</h3>` : "") +
+      open.map((r) => {
+        const at = r.trip.entryTime + r.trip.initialDelay;
+        return `<div class="rep"><div><b>${r.no}</b> von Fdl ${g.portals[r.portal].label}<br><small>${r.trip.from} → ${r.trip.to} · Einfahrt ca. ${hm(at)}${r.trip.initialDelay >= 180 ? ` (+${Math.round(r.trip.initialDelay / 60)})` : ""}</small></div><button data-acc="${r.id}">Annehmen</button></div>`;
+      }).join("") +
+      outs.map((r) => `<div class="rep out"><div><b>${r.no}</b> an Fdl ${g.portals[r.portal].label} angeboten<br><small>${r.state === "refused" ? `abgelehnt: ${r.note}` : "warte auf Antwort …"}</small></div></div>`).join("");
+    $("tab-next").innerHTML = repHtml + `<h3>Vorschau</h3><p>Züge, die in den nächsten Minuten in den Bereich einfahren oder bereitgestellt werden.</p>` +
       w.upcoming(40).map((t) => {
         const at = t.entryTime + t.initialDelay;
         const dm = Math.round(t.initialDelay / 60);
@@ -345,6 +363,23 @@ async function boot() {
     }
   };
 
+  // ---------- Zweiter Monitor ----------
+  const ch = new BroadcastChannel(CHANNEL);
+  const sendSnap = () => ch.postMessage({ type: "snap", snap: makeSnapshot(w, g) });
+  ch.onmessage = (e) => {
+    if (e.data?.type === "hello") sendSnap();
+    if (e.data?.type === "accept") {
+      const why = w.acceptReport(Number(e.data.id));
+      if (why) toast(why);
+      sendSnap();
+    }
+  };
+  $("monBtn").onclick = () => {
+    const win = window.open("monitor.html", "stellwerk-monitor", "popup,width=1600,height=900");
+    if (!win) toast("Das Fenster wurde blockiert. Bitte Pop-ups für diese Seite erlauben.");
+  };
+  let snapT = 0;
+
   // ---------- Hauptschleife ----------
   let last = performance.now(), uiT = 0;
   const frame = (now: number) => {
@@ -353,6 +388,8 @@ async function boot() {
     w.advance(dt, speed);
     view.draw(dt);
     uiT += dt;
+    snapT += dt;
+    if (snapT > 1) { snapT = 0; sendSnap(); }
     if (uiT > 0.4) {
       uiT = 0;
       announce();

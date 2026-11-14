@@ -23,6 +23,7 @@
         <button id="editBtn" title="Zeilenumbrüche selbst setzen">✂ Einteilen</button>
         <button id="fitBtn" title="Ganze Strecke einpassen">⤢</button>
       </div>
+      <div class="speed"><button id="monBtn" title="Fahrplanmonitor, Zugmeldungen und Bildfahrplan in einem eigenen Fenster (zweiter Bildschirm)">🖥 Zweiter Monitor</button></div>
       <div class="stats">
         <div><span id="pts">0</span><small>Punkte</small></div>
         <div><span id="punct">–</span><small>pünktlich</small></div>
@@ -35,7 +36,7 @@
       <aside id="side">
         <nav class="tabs">
           <button data-tab="trains" class="on">Züge</button>
-          <button data-tab="next">Anmeldungen</button>
+          <button data-tab="next">Zugmeldungen <b id="repCount"></b></button>
           <button data-tab="faults">Störungen <b id="faultCount"></b></button>
           <button data-tab="area">Stellbereich</button>
           <button data-tab="help">Hilfe</button>

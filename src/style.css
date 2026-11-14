@@ -151,3 +151,8 @@ main { position: absolute; top: 52px; bottom: 0; left: 0; right: 0; }
 #ctx button:hover:not(:disabled) { background: #1f2c3a; }
 #ctx button:disabled { color: #5d6c7d; cursor: default; }
 #ctx hr { border: none; border-top: 1px solid var(--line); margin: 3px 0; }
+.rep { display: flex; align-items: center; gap: 8px; margin: 6px 12px; padding: 8px 10px; background: #1d1a0d; border: 1px solid #5c4d13; border-radius: 6px; line-height: 1.35; }
+.rep > div { flex: 1; }
+.rep small { color: var(--dim); }
+.rep.out { background: #111a24; border-color: var(--line); }
+.rep button { background: #1f6f3f; border: 1px solid #2fd27a; color: #fff; border-radius: 5px; padding: 6px 10px; font-size: 12px; font-weight: 600; }

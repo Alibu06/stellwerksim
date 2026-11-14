@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="de">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Stellwerk Sieg – Zweiter Monitor</title>
+    <link rel="stylesheet" href="/src/monitor.css" />
+  </head>
+  <body>
+    <header>
+      <div class="brand">◆ Stellwerk Sieg <span>Zweiter Monitor</span></div>
+      <div id="clock">--:--:--</div>
+      <div id="conn" class="off">keine Verbindung zum Stellwerk</div>
+      <div class="stats" id="stats"></div>
+    </header>
+    <main>
+      <section id="board">
+        <div class="head"><select id="station"></select>
+          <div class="seg"><button data-m="dep" class="on">Abfahrt</button><button data-m="arr">Ankunft</button></div></div>
+        <table id="boardTab"></table>
+      </section>
+      <section id="graph"><div class="head"><b>Bildfahrplan</b> <span class="hint">gestrichelt = Plan, durchgezogen = Ist</span>
+        <div class="seg"><button data-r="60">1 h</button><button data-r="120" class="on">2 h</button><button data-r="240">4 h</button></div></div>
+        <canvas id="cv"></canvas></section>
+      <section id="side">
+        <h3>Zugmeldungen</h3><div id="reports"></div>
+        <h3>Störungen</h3><div id="faults"></div>
+        <h3>Meldungen</h3><div id="events"></div>
+      </section>
+    </main>
+    <script type="module" src="/src/monitor.ts"></script>
+  </body>
+</html>

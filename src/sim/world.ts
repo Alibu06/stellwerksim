@@ -58,6 +58,22 @@ export interface Fault {
   text: string;
 }
 
+// Zugmeldeverfahren mit den Nachbarstellwerken
+export interface Report {
+  id: number;
+  no: string;
+  trip: TripSpec;
+  portal: string;
+  kind: "in" | "out"; // in = Nachbar bietet an (Spieler nimmt an), out = Spieler bietet dem Nachbarn an
+  state: "offered" | "accepted" | "refused";
+  t: number;
+  respondAt?: number;
+  note?: string;
+}
+
+// Zuständiger Bahnhof für ein Streckenende (Zugmeldungen nur dort von Hand, wo der Spieler stellt)
+export const PORTAL_AREA: Record<string, string> = { W_S: "TR", W_M: "TR", W_SFS: "TR", W_FL: "TR", S_BB: "TR", E_SFS: "SB", WW: "AU", E_BZ: "BZ", E_HT: "BZ", E_DT: "BZ" };
+
 export interface GameEvent {
   t: number;
   text: string;
@@ -95,6 +111,10 @@ export class World {
   private rand = rng(4711);
   private faultTimer = 0;
   private faultId = 1;
+  reports: Report[] = [];
+  private reportId = 1;
+  zugmeldung = true; // Funktion an/aus
+  manualAreas = new Set<string>(); // Bahnhöfe, die der Spieler stellt
 
   constructor(public g: Graph, trips: TripSpec[], startTime: number) {
     this.il = new Interlocking(g);
@@ -122,6 +142,7 @@ export class World {
 
   step(dt: number) {
     this.time += dt;
+    if (this.zugmeldung) this.reportsTick();
     this.spawn();
     for (const t of this.trains) this.drive(t, dt);
     this.trains = this.trains.filter((t) => !t.gone);
@@ -167,6 +188,7 @@ export class World {
   }
 
   private spawnAtPortal(trip: TripSpec): boolean {
+    if (this.zugmeldung && !this.reports.some((r) => r.kind === "in" && r.trip === trip && r.state === "accepted")) return false;
     const p = this.g.portals[trip.entryPortal!];
     const n = this.g.nodes[p.inNode];
     const e = (p.dir > 0 ? n.east : n.west)[0];
@@ -567,6 +589,10 @@ export class World {
   setRoute(startSig: number, endSig: number | string): string | null {
     const cands = (this.il.paths.get(startSig) ?? []).filter((p) => (typeof endSig === "string" ? p.endPortal === endSig : p.endSig === endSig));
     if (!cands.length) return "Keine Fahrstraße zwischen diesen Signalen";
+    if (typeof endSig === "string" && this.zugmeldung) {
+      const t = this.trains.find((x) => x.nextSig === startSig);
+      if (t && t.trip.exitPortal === endSig && !this.outAccepted(t)) return `${t.no} ist vom Nachbarn noch nicht angenommen (Zugmeldung)`;
+    }
     cands.sort((a, b) => Number(a.diverging) - Number(b.diverging) || a.len - b.len);
     let why: string | null = null;
     for (const p of cands) {
@@ -599,7 +625,10 @@ export class World {
       const paths = this.il.paths.get(s.id) ?? [];
       if (!paths.length) continue;
       if (s.kind === "block") {
-        for (const p of paths) if (!this.il.check(p)) { this.il.set(p, this.time); break; }
+        for (const p of paths) {
+          if (p.endPortal && this.zugmeldung && !this.outAccepted(t)) continue;
+          if (!this.il.check(p)) { this.il.set(p, this.time); break; }
+        }
         continue;
       }
       if (t.stopAheadIsPlatform && !t.dwelling) continue;
@@ -622,6 +651,7 @@ export class World {
       // Deutlich schlechtere Umwege (z. B. lange Gegengleisfahrt) nicht wählen, lieber warten
       if (c > ideal * 1.25 + 800) continue;
       if (this.singleTrackBlocked(t, p)) continue;
+      if (p.endPortal && this.zugmeldung && !this.outAccepted(t)) continue;
       if (this.il.check(p)) continue;
       if (c < bestCost) {
         bestCost = c;
@@ -667,6 +697,19 @@ export class World {
   // Würde der Zug mit diesem Fahrweg vor einem eingleisigen Abschnitt warten, in dem ein Gegenzug
   // unterwegs ist, und dabei das letzte freie Gleis für den Gegenzug zustellen?
   private crossingBlocked(t: Train, p: PathDef): boolean {
+    // Einfahrt in den eingleisigen Abschnitt nur, wenn im Kreuzungsbahnhof am anderen Ende ein Gleis frei ist
+    for (const S of this.singles) {
+      if (!p.edges.some((e) => S.edges.has(e))) continue;
+      const far = [...S.gates].filter(([, d]) => d !== t.dir);
+      if (far.length < 2) continue;
+      const free = far.filter(([sid]) => {
+        const eb = this.edgeBehind(this.il.sig(sid));
+        if (eb < 0) return false;
+        const E = this.g.edges[eb];
+        return !E.occ && !E.lock;
+      }).length;
+      if (free === 0) return true;
+    }
     if (!p.endSig) return false;
     for (const S of this.singles) {
       if (S.gates.get(p.endSig) !== t.dir) continue;
@@ -883,6 +926,65 @@ export class World {
     if (!t) return "Kein Zug steht vor diesem Signal";
     this.il.zs1.set(sid, this.time + 90);
     this.log(`Ersatzsignal an ${s.name} für ${t.no}`, "info");
+    return null;
+  }
+
+  // ---------------- Zugmeldungen ----------------
+  private reportsTick() {
+    // Nachbar bietet einfahrende Züge etwa 4 Minuten vor Einfahrt an
+    for (const trip of this.pending) {
+      if (!trip.entryPortal) continue;
+      const at = trip.entryTime + trip.initialDelay;
+      if (at - 240 > this.time) break;
+      if (this.reports.some((r) => r.trip === trip && r.kind === "in")) continue;
+      const auto = !this.manualAreas.has(PORTAL_AREA[trip.entryPortal] ?? "");
+      const r: Report = { id: this.reportId++, no: trip.no, trip, portal: trip.entryPortal, kind: "in", state: auto ? "accepted" : "offered", t: this.time };
+      this.reports.push(r);
+      if (!auto) this.log(`Zugmeldung: Fdl ${this.g.portals[trip.entryPortal].label} bietet ${trip.no} an. Annehmen?`, "warn");
+    }
+    // Ausfahrende Züge dem Nachbarn anbieten
+    for (const t of this.trains) {
+      const ex = t.trip.exitPortal;
+      if (!ex || t.stops.some((s, i) => i >= t.stopIdx && !s.done)) continue;
+      const P = this.g.portals[ex];
+      const ps = this.g.nodes[P.outNode].s ?? 0;
+      if (Math.abs(ps - this.headS(t)) > 6000) continue;
+      const old = this.reports.find((r) => r.trip === t.trip && r.kind === "out");
+      if (!old) {
+        this.reports.push({ id: this.reportId++, no: t.no, trip: t.trip, portal: ex, kind: "out", state: "offered", t: this.time, respondAt: this.time + 10 + this.rand() * 35 });
+        continue;
+      }
+      if (old.respondAt && this.time >= old.respondAt && old.state !== "accepted") {
+        if (old.state === "offered" && this.rand() < 0.07) {
+          old.state = "refused";
+          const why = ["Strecke noch belegt", "Gleis im Nachbarbahnhof besetzt", "Gegenzug muss erst durch"][Math.floor(this.rand() * 3)];
+          old.note = why;
+          old.respondAt = this.time + 120 + this.rand() * 240;
+          this.log(`Zugmeldung: Fdl ${P.label} lehnt ${t.no} ab (${why}), erneut anbieten in ${Math.round((old.respondAt - this.time) / 60)} min`, "warn");
+        } else {
+          old.state = "accepted";
+          old.respondAt = undefined;
+          old.t = this.time;
+        }
+      }
+    }
+    // Alte Meldungen aufräumen
+    if (this.reports.length > 80) {
+      const live = new Set(this.trains.map((t) => t.trip));
+      this.reports = this.reports.filter((r) => r.state === "offered" || live.has(r.trip) || this.pending.includes(r.trip) || this.time - r.t < 900);
+    }
+  }
+
+  outAccepted(t: Train): boolean {
+    return this.reports.some((r) => r.trip === t.trip && r.kind === "out" && r.state === "accepted");
+  }
+
+  acceptReport(id: number): string | null {
+    const r = this.reports.find((x) => x.id === id);
+    if (!r || r.kind !== "in" || r.state !== "offered") return "Meldung nicht mehr offen";
+    r.state = "accepted";
+    r.t = this.time;
+    this.log(`Zugmeldung: ${r.no} von ${this.g.portals[r.portal].label} angenommen`, "info");
     return null;
   }
 
