@@ -6,6 +6,7 @@ import { TrainWindow } from "./ui/trainWindow";
 import { ContextMenu, MenuItem } from "./ui/contextMenu";
 import { radio } from "./sim/radio";
 import { CHANNEL, makeSnapshot } from "./sim/snapshot";
+import { SAVE_KEY, loadGame, readSave, saveGame } from "./sim/save";
 import { DEFAULT_FEATURES, FEATURE_LABELS, Features, WX } from "./sim/extras";
 
 const AREAS: [string, string][] = [
@@ -31,19 +32,31 @@ async function boot() {
   const F0: Features = { ...DEFAULT_FEATURES, ...savedF };
   $("featPick").innerHTML = FEATURE_LABELS.map(([k, n, d]) => `<label><input type="checkbox" data-f="${k}" ${F0[k] ? "checked" : ""}><span>${n}<small>${d}</small></span></label>`).join("");
   if (savedF.faults !== undefined) ($("faults") as HTMLSelectElement).value = String(savedF.faults);
-  await new Promise<void>((res) => ($("go").onclick = () => res()));
+  const save = readSave();
+  if (save && save.meta?.date === Number(raw.date)) {
+    $("resume").classList.remove("hidden");
+    $("resume").innerHTML = `Gespeicherten Dienst fortsetzen<small>Spielzeit ${hm(save.time)} Uhr, gespeichert ${new Date(save.meta.savedAt).toLocaleString("de-DE", { dateStyle: "short", timeStyle: "short" })}</small>`;
+  }
+  const resume = await new Promise<boolean>((res) => {
+    $("go").onclick = () => res(false);
+    $("resume").onclick = () => res(true);
+  });
   const startHour = Number(($("startHour") as HTMLSelectElement).value);
   const faultRate = Number(($("faults") as HTMLSelectElement).value);
-  const feats: Features = { ...F0, faults: faultRate };
+  let feats: Features = { ...F0, faults: faultRate };
   document.querySelectorAll<HTMLInputElement>("#featPick input").forEach((i) => ((feats as any)[i.dataset.f!] = i.checked));
   try { localStorage.setItem("stellwerk-features", JSON.stringify(feats)); } catch { /* egal */ }
-  const manual = new Set([...document.querySelectorAll<HTMLInputElement>("#areaPick input:checked")].map((i) => i.value));
+  let manual = new Set([...document.querySelectorAll<HTMLInputElement>("#areaPick input:checked")].map((i) => i.value));
+  if (resume && save) {
+    feats = { ...DEFAULT_FEATURES, ...save.meta.feats };
+    manual = new Set(save.meta.manual);
+  }
   $("start").remove();
 
   let trips = buildTrips(g, raw, Number(raw.date));
   if (!feats.gueter) trips = trips.filter((t) => t.cat !== "G");
   if (!feats.vorbereich) for (const t of trips) t.initialDelay = 0;
-  const w = new World(g, trips, startHour * 3600 - 120 * 60);
+  const w = new World(g, trips, resume && save ? save.time : startHour * 3600 - 120 * 60);
   w.faultRate = 0;
   w.zugmeldung = feats.zugmeldung;
   w.ext.start({ ...feats, ereignisse: false, faults: 0 }, startHour * 3600);
@@ -52,6 +65,21 @@ async function boot() {
     w.manualAreas = new Set(manual);
   };
   applyAreas();
+  let shiftStart: number;
+  if (resume && save) {
+    w.ext.f = feats;
+    try {
+      loadGame(w, save.json, trips);
+    } catch (e) {
+      alert(`Der Spielstand konnte nicht geladen werden (${(e as Error).message}). Bitte neu starten.`);
+      localStorage.removeItem(SAVE_KEY);
+      location.reload();
+      return;
+    }
+    w.manualAreas = new Set(manual);
+    shiftStart = save.meta.shiftStart;
+    w.log("Spielstand geladen.", "good");
+  } else {
   // Vorlauf: 2 Stunden automatisch, damit beim Dienstbeginn schon Züge unterwegs sind
   const saved = g.signals.map((s) => s.auto);
   for (const s of g.signals) s.auto = true;
@@ -65,14 +93,26 @@ async function boot() {
   w.faultCount = 0;
   w.ext.f = feats;
   w.connAlerts = [];
-  const shiftStart = w.time;
+  shiftStart = w.time;
+  if (feats.weather) w.log(`Wetter: ${WX[w.ext.wx].icon} ${WX[w.ext.wx].label}. ${WX[w.ext.wx].text}`, "info");
+  w.log(`Dienstbeginn. Du stellst: ${[...manual].map((c) => g.stations[c].name).join(", ") || "nichts (Beobachtungsmodus)"}.`, "good");
+  }
   const wxNow = () => {
     if (!feats.weather) return "";
     const W = WX[w.ext.wx];
     return `<b>${W.icon}</b>${W.label}`;
   };
-  if (feats.weather) w.log(`Wetter: ${WX[w.ext.wx].icon} ${WX[w.ext.wx].label}. ${WX[w.ext.wx].text}`, "info");
-  w.log(`Dienstbeginn. Du stellst: ${[...manual].map((c) => g.stations[c].name).join(", ") || "nichts (Beobachtungsmodus)"}.`, "good");
+
+  const doSave = (quiet = false) => {
+    try {
+      localStorage.setItem(SAVE_KEY, saveGame(w, { feats, manual: [...manual], shiftStart, date: Number(raw.date) }));
+      if (!quiet) toast("Spielstand gespeichert");
+    } catch (e) {
+      if (!quiet) toast(`Speichern fehlgeschlagen: ${(e as Error).message}`);
+    }
+  };
+  setInterval(() => doSave(true), 60000);
+  window.addEventListener("beforeunload", () => doSave(true));
 
   const cv = $("cv") as HTMLCanvasElement;
   const view = new View(cv, g, w);
@@ -449,6 +489,10 @@ async function boot() {
     $("repClose").onclick = () => $("report").classList.add("hidden");
     $("repNew").onclick = () => location.reload();
   };
+  $("saveBtn").onclick = () => doSave();
+  window.addEventListener("keydown", (e) => {
+    if ((e.ctrlKey || e.metaKey) && e.key === "s") { e.preventDefault(); doSave(); }
+  });
   $("endBtn").onclick = () => { setSpeed(0); showReport(); };
 
   // ---------- Zweiter Monitor ----------
