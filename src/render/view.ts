@@ -215,6 +215,7 @@ export class View {
     this.drawTracks(ctx);
     this.drawTrainBodies(ctx);
     this.drawSwitches(ctx);
+    this.drawDistants(ctx);
     this.drawSignals(ctx);
     this.drawPortals(ctx);
     this.drawTrainLabels(ctx);
@@ -404,8 +405,9 @@ export class View {
       ctx.moveTo(footX, p.y - 3 * k);
       ctx.lineTo(footX, p.y + 3 * k);
       ctx.stroke();
-      // Schirm
-      let col = asp.stop ? COLORS.red : asp.expectStop ? COLORS.yellow : COLORS.green;
+      // Schirm (Ks-System): Hp0 rot, Ks1 grün, Ks2 gelb nur am Mehrabschnittssignal, Ks1 blinkend bei Zs3v
+      let col = asp.stop ? COLORS.red : asp.expectStop && s.combined ? COLORS.yellow : COLORS.green;
+      if (!asp.stop && !asp.expectStop && asp.zs3v && s.combined && Math.floor(this.blink * 2) % 2) col = "#145c36";
       if (asp.zs1) col = Math.floor(this.blink * 2.5) % 2 ? COLORS.white : COLORS.red;
       const tip = p.x + s.dir * L * 0.5, back = p.x - s.dir * L * 0.5;
       ctx.beginPath();
@@ -458,6 +460,40 @@ export class View {
         ctx.textAlign = "center";
         ctx.fillText(String(asp.zs3), back - s.dir * 6 * k, p.y + 3 * k);
       }
+    }
+  }
+
+  // Vorsignale: kleine Raute ohne Mast, gelb = Halt erwarten, grün = Fahrt erwarten, grün blinkend = Geschwindigkeit erwarten
+  private drawDistants(ctx: CanvasRenderingContext2D) {
+    if (this.zoom < 0.55) return;
+    const k = this.k;
+    for (const d of this.g.distants ?? []) {
+      const e = this.g.edges[d.edge];
+      const a = this.g.nodes[e.a], b = this.g.nodes[e.b];
+      const f = d.pos / e.len;
+      const x = a.x + (b.x - a.x) * f, y = a.y + (b.y - a.y) * f;
+      const P = this.P(x, y);
+      const px = P.x, py = P.y + d.dir * 8 * k;
+      const asp = this.w.il.distantAspect(d.main, this.w.time);
+      let col = asp.expectStop ? COLORS.yellow : COLORS.green;
+      if (!asp.expectStop && asp.zs3v && Math.floor(this.blink * 2) % 2) col = "#145c36";
+      const r = 3.4 * k;
+      ctx.strokeStyle = "#71808f";
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(px, P.y + d.dir * 2 * k);
+      ctx.lineTo(px, py - d.dir * r);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(px + d.dir * r, py);
+      ctx.lineTo(px, py - r);
+      ctx.lineTo(px - d.dir * r, py);
+      ctx.lineTo(px, py + r);
+      ctx.closePath();
+      ctx.fillStyle = col;
+      ctx.fill();
+      ctx.strokeStyle = "#0c1015";
+      ctx.stroke();
     }
   }
 

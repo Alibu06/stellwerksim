@@ -1,4 +1,4 @@
-import { Dir, GEdge, GNode, Graph, Signal, SignalKind } from "./graph";
+import { Dir, GEdge, GNode, Graph, Signal, SignalKind, placeDistants } from "./graph";
 
 // Baukasten für das Gleisbild in echten Streckenkilometern.
 // Alles wird in Metern entlang der Strecke (s) und einer Spur (y) beschrieben.
@@ -219,6 +219,7 @@ export class Layout {
       cnt[c] = (cnt[c] ?? 0) + 1;
       n.swName = real ?? `${c} W${cnt[c]}`;
     }
+    placeDistants(g);
     return g;
   }
 }

@@ -226,13 +226,26 @@ export class Interlocking {
   }
 
   // Signalbegriff: 0 = Halt, 1 = Fahrt, 2 = Fahrt + Halt erwarten
-  aspect(s: Signal, now: number): { stop: boolean; expectStop: boolean; zs3: number; zs1: boolean } {
-    if (!this.proceeds(s, now)) return { stop: true, expectStop: false, zs3: 0, zs1: this.zs1.has(s.id) };
+  aspect(s: Signal, now: number): { stop: boolean; expectStop: boolean; zs3: number; zs1: boolean; zs3v: number } {
+    if (!this.proceeds(s, now)) return { stop: true, expectStop: false, zs3: 0, zs1: this.zs1.has(s.id), zs3v: 0 };
     const r = this.routes.get(s.route)!;
     const end = r.path.endSig ? this.sig(r.path.endSig) : null;
     const expectStop = !!end && !this.proceeds(end, now);
     const zs3 = r.path.diverging || r.path.vmax < 100 ? Math.floor(Math.min(r.path.vmax, 100) / 10) : 0;
-    return { stop: false, expectStop, zs3, zs1: false };
+    let zs3v = 0;
+    if (end && !expectStop) {
+      const nr = this.routes.get(end.route);
+      if (nr && (nr.path.diverging || nr.path.vmax < 100)) zs3v = Math.floor(Math.min(nr.path.vmax, 100) / 10);
+    }
+    return { stop: false, expectStop, zs3, zs1: false, zs3v };
+  }
+
+  // Begriff eines Vorsignals: Halt erwarten, Fahrt erwarten oder Geschwindigkeit erwarten (Ks1 blinkend)
+  distantAspect(mainId: number, now: number): { expectStop: boolean; zs3v: number } {
+    const m = this.sig(mainId);
+    if (!this.proceeds(m, now)) return { expectStop: true, zs3v: 0 };
+    const a = this.aspect(m, now);
+    return { expectStop: false, zs3v: a.zs3 };
   }
 
   isDivergingEdge(n: number, e: number) {
