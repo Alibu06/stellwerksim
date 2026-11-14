@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="de">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Stellwerk Sieg</title>
+    <link rel="stylesheet" href="/src/style.css" />
+  </head>
+  <body>
+    <header id="bar">
+      <div class="brand"><span class="logo">◆</span> Stellwerk Sieg</div>
+      <div class="clock" id="clock">--:--:--</div>
+      <div class="speed" id="speed">
+        <button data-s="0" title="Pause (Leertaste)">❚❚</button>
+        <button data-s="1" class="on">1×</button>
+        <button data-s="4">4×</button>
+        <button data-s="15">15×</button>
+        <button data-s="60">60×</button>
+      </div>
+      <div class="speed" id="rows">
+        <span class="lbl">Zeilen</span>
+        <button data-r="1">1</button><button data-r="2">2</button><button data-r="3">3</button><button data-r="4">4</button><button data-r="5">5</button>
+        <button id="editBtn" title="Zeilenumbrüche selbst setzen">✂ Einteilen</button>
+        <button id="fitBtn" title="Ganze Strecke einpassen">⤢</button>
+      </div>
+      <div class="stats">
+        <div><span id="pts">0</span><small>Punkte</small></div>
+        <div><span id="punct">–</span><small>pünktlich</small></div>
+        <div><span id="wait">0</span><small>Min. vor Halt</small></div>
+        <div><span id="ntrains">0</span><small>Züge im Bereich</small></div>
+      </div>
+    </header>
+    <main>
+      <canvas id="cv"></canvas>
+      <aside id="side">
+        <nav class="tabs">
+          <button data-tab="trains" class="on">Züge</button>
+          <button data-tab="next">Anmeldungen</button>
+          <button data-tab="faults">Störungen <b id="faultCount"></b></button>
+          <button data-tab="area">Stellbereich</button>
+          <button data-tab="help">Hilfe</button>
+        </nav>
+        <section id="tab-trains" class="tab on"></section>
+        <section id="tab-next" class="tab"></section>
+        <section id="tab-faults" class="tab"></section>
+        <section id="tab-area" class="tab"></section>
+        <section id="tab-help" class="tab">
+          <h3>Bedienung</h3>
+          <p><b>Fahrstraße stellen:</b> Startsignal anklicken, dann eines der blau markierten Zielsignale (oder ein Streckenende).</p>
+          <p><b>Ersatzsignal:</b> Strg + Klick (Mac: Cmd/Alt + Klick) auf ein Halt zeigendes Signal, vor dem ein Zug steht. Der Zug fährt mit höchstens 40 km/h auf Sicht bis zum nächsten Signal. Nur nutzen, wenn der Fahrweg wirklich frei ist.</p>
+          <p><b>Fahrstraße zurücknehmen:</b> Rechtsklick auf das Startsignal, solange der Zug noch nicht vorbeigefahren ist.</p>
+          <p><b>Zuglenkung:</b> Umschalt + Klick auf ein Signal schaltet die Automatik für dieses Signal ein oder aus (blauer Ring = automatisch).</p>
+          <p><b>Weiche umstellen:</b> Klick auf den Weichenpunkt (nur wenn frei und nicht verschlossen).</p>
+          <p><b>Zug:</b> Klick auf die Zugnummer zeigt den Zuglauf.</p>
+          <p><b>Ansicht:</b> Oben die Anzahl der Zeilen wählen oder mit „Einteilen“ selbst bestimmen, wo die Strecke umbricht. ⤢ passt alles auf den Bildschirm. Mausrad zoomt, Ziehen verschiebt.</p>
+          <h3>Störungen</h3>
+          <p>Weichenstörung: Weiche lässt sich nicht umstellen, plane einen anderen Fahrweg. Signalstörung: Signal zeigt keine Fahrt, Ersatzsignal geben. Tür- und Fahrzeugstörungen halten Züge einige Minuten auf.</p>
+          <h3>Farben</h3>
+          <p><span class="sw" style="background:#2fd27a"></span> Fahrstraße festgelegt &nbsp; <span class="sw" style="background:#ff4d57"></span> Gleis besetzt &nbsp; <span class="sw" style="background:#1d7a4a"></span> Durchrutschweg</p>
+          <p>Signal: rot = Halt, grün = Fahrt, gelb = Fahrt, Halt erwarten. Zahl neben dem Signal = Geschwindigkeitsanzeiger (×10 km/h).</p>
+          <h3>Daten</h3>
+          <p>Personenzüge: Fahrplan von gtfs.de (DELFI e.V., CC BY 4.0). Güterzüge sind generiert, da ihre Fahrplanlagen nicht öffentlich sind. Zugnummern sind erzeugt.</p>
+        </section>
+        <div id="log"></div>
+      </aside>
+      <div id="toast"></div>
+      <div id="card" class="hidden"></div>
+    </main>
+    <div id="start">
+      <div class="panel">
+        <h1><span class="logo">◆</span> Stellwerk Sieg</h1>
+        <p class="sub">Fahrdienstleitung Porz-Wahn – Troisdorf – Siegburg/Bonn – Au (Sieg) – Betzdorf</p>
+        <label>Dienstbeginn
+          <select id="startHour">
+            <option value="5">05:00 Frühschicht</option>
+            <option value="7" selected>07:00 Berufsverkehr</option>
+            <option value="12">12:00 Mittag</option>
+            <option value="16">16:00 Spätschicht</option>
+            <option value="21">21:00 Nachtschicht (viel Güterverkehr)</option>
+          </select>
+        </label>
+        <label style="margin-top:14px">Störungen
+          <select id="faults">
+            <option value="0">aus</option>
+            <option value="0.5">selten</option>
+            <option value="1" selected>normal</option>
+            <option value="2">häufig</option>
+          </select>
+        </label>
+        <p class="hint">Wähle, welche Bahnhöfe du selbst stellst. Der Rest läuft über die automatische Zuglenkung.</p>
+        <div id="areaPick" class="areas"></div>
+        <button id="go">Dienst beginnen</button>
+      </div>
+    </div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
