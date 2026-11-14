@@ -94,3 +94,60 @@ main { position: absolute; top: 52px; bottom: 0; left: 0; right: 0; }
 .fault { margin: 8px 12px; padding: 8px 10px; background: #221a0d; border: 1px solid #5c4313; border-radius: 6px; line-height: 1.4; }
 .fault small { color: var(--dim); display: block; margin-top: 2px; }
 .fault button { margin-top: 6px; background: #3a2c10; border: 1px solid #8a6418; color: #ffd27a; border-radius: 5px; padding: 4px 8px; font-size: 12px; }
+
+/* ---------- Zugfenster ---------- */
+#card { width: 380px; max-height: calc(100% - 28px); overflow-y: auto; }
+#card .ttabs { display: flex; gap: 2px; margin: 4px 0 8px; border-bottom: 1px solid var(--line); }
+#card .ttabs button { flex: 1; background: none; border: none; border-bottom: 2px solid transparent; padding: 6px 2px; font-size: 11px; color: var(--dim); }
+#card .ttabs button.on { color: #fff; border-bottom-color: var(--accent); }
+#card .pos { background: #0d141c; border: 1px solid var(--line); border-radius: 6px; padding: 7px 9px; margin-bottom: 8px; line-height: 1.45; }
+#card ul.status { list-style: none; margin: 0 0 8px; padding: 0; }
+#card ul.status li { padding: 4px 8px; margin-bottom: 3px; border-left: 3px solid #3b4757; background: #121b25; border-radius: 3px; }
+#card ul.status li.ok { border-color: var(--good); } #card ul.status li.warn { border-color: var(--warn); } #card ul.status li.bad { border-color: var(--bad); }
+#card table.kv td { padding: 3px 0; vertical-align: top; }
+#card table.kv td:first-child { color: var(--dim); width: 42%; }
+#card table.kv td:nth-child(2) { font-family: inherit; text-align: left; }
+#card table.plan th { font-weight: 500; color: var(--dim); font-size: 10.5px; text-align: right; padding-bottom: 3px; }
+#card table.plan th:first-child { text-align: left; }
+#card table.plan td { font-family: "JetBrains Mono", ui-monospace, monospace; text-align: right; padding: 3px 0 3px 6px; }
+#card table.plan td:first-child { font-family: inherit; text-align: left; padding-left: 0; }
+#card .prog { font-style: italic; opacity: 0.85; }
+#card .hint { color: var(--dim); margin: 6px 0; line-height: 1.4; }
+#card .tact { display: flex; gap: 6px; margin-top: 10px; }
+#card .tact button, #card .rbtns button, #card .rform button { background: #18212c; border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; font-size: 11.5px; }
+#card .tact button:hover, #card .rbtns button:hover { background: #1f2c3a; }
+#card select, #card input { width: 100%; margin-top: 6px; background: #0d141c; color: #fff; border: 1px solid var(--line); border-radius: 6px; padding: 7px; font: inherit; font-size: 12px; }
+#card .radio { height: 190px; overflow-y: auto; background: #0b1117; border: 1px solid var(--line); border-radius: 6px; padding: 6px; margin-bottom: 8px; }
+#card .radio div { margin-bottom: 5px; line-height: 1.4; }
+#card .radio div.fdl b { color: var(--accent); } #card .radio div.tf b { color: var(--warn); }
+#card .radio time { font-family: "JetBrains Mono", ui-monospace, monospace; color: var(--dim); margin-right: 5px; font-size: 10.5px; }
+#card .rbtns { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; }
+#card .rform { display: flex; gap: 6px; margin-top: 8px; }
+#card .rform input { margin: 0; }
+
+/* Fahrgastinformation (eigene Gestaltung) */
+.fisbox { background: #05070a; border: 2px solid #2a3442; border-radius: 10px; overflow: hidden; font-family: Inter, system-ui, sans-serif; }
+.fistop { display: flex; align-items: center; gap: 8px; background: #0f2235; padding: 8px 10px; }
+.fisline { color: #04111c; font-weight: 800; border-radius: 4px; padding: 2px 7px; font-size: 13px; }
+.fisdest { flex: 1; color: #fff; font-weight: 700; font-size: 15px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.fisclock { color: #9fd4ff; font-family: "JetBrains Mono", ui-monospace, monospace; font-size: 14px; }
+.fisnext { padding: 10px 12px 8px; border-bottom: 1px solid #1a2330; }
+.fisnext small { color: #8da3b8; font-size: 11px; }
+.fisnext div { color: #ffe27a; font-size: 22px; font-weight: 800; margin: 2px 0; }
+.fisdelay { color: #ff6b74; font-weight: 700; }
+.fislist { padding: 6px 12px; }
+.fislist div { display: flex; justify-content: space-between; color: #d8e4ef; padding: 3px 0; border-bottom: 1px dotted #1d2836; font-size: 12.5px; }
+.fislist div.dim { color: #7e90a3; }
+.fislist span:last-child { font-family: "JetBrains Mono", ui-monospace, monospace; color: #9fd4ff; }
+.fisticker { background: #0f2235; color: #fff; overflow: hidden; white-space: nowrap; padding: 6px 0; font-size: 12px; }
+.fisticker span { display: inline-block; padding-left: 100%; animation: fisrun 16s linear infinite; }
+@keyframes fisrun { from { transform: translateX(0); } to { transform: translateX(-100%); } }
+
+/* Rechtsklick-Menü */
+#ctx { position: fixed; z-index: 20; min-width: 210px; background: #121a24f7; border: 1px solid #2b3747; border-radius: 8px; box-shadow: 0 10px 30px #000a; padding: 4px; font-size: 12.5px; }
+#ctx.hidden { display: none; }
+#ctx .ctxh { color: var(--dim); font-size: 11px; padding: 5px 9px 4px; border-bottom: 1px solid var(--line); margin-bottom: 3px; }
+#ctx button { display: block; width: 100%; text-align: left; background: none; border: none; padding: 6px 9px; border-radius: 5px; }
+#ctx button:hover:not(:disabled) { background: #1f2c3a; }
+#ctx button:disabled { color: #5d6c7d; cursor: default; }
+#ctx hr { border: none; border-top: 1px solid var(--line); margin: 3px 0; }

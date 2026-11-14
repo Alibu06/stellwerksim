@@ -30,7 +30,8 @@ export type Hit =
   | { kind: "switch"; node: number }
   | { kind: "train"; train: Train }
   | { kind: "portal"; code: string }
-  | { kind: "break"; x: number };
+  | { kind: "break"; x: number }
+  | { kind: "edge"; edge: number };
 
 interface Band {
   x0: number; // Roh-x Beginn (inklusive)
@@ -343,6 +344,39 @@ export class View {
       ctx.stroke();
     }
     ctx.setLineDash([]);
+    // Langsamfahrstellen (gelb gestrichelt mit Geschwindigkeit) und gesperrte Gleise (Kreuze)
+    for (const e of this.g.edges) {
+      if (!e.slow && !e.closed) continue;
+      const A = this.g.nodes[e.a], B = this.g.nodes[e.b];
+      const a = this.P(A.x + 1e-6, A.y), b = this.P(B.x - 1e-6, B.y);
+      if (Math.abs(a.y - b.y) > 80) continue;
+      if (e.slow) {
+        ctx.strokeStyle = COLORS.yellow;
+        ctx.lineWidth = 1.5;
+        ctx.setLineDash([5, 4]);
+        ctx.beginPath();
+        ctx.moveTo(a.x, a.y - 5 * this.k);
+        ctx.lineTo(b.x, b.y - 5 * this.k);
+        ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.font = this.mono(8, 700);
+        ctx.fillStyle = COLORS.yellow;
+        ctx.textAlign = "center";
+        ctx.fillText(`La ${e.slow}`, (a.x + b.x) / 2, (a.y + b.y) / 2 - 8 * this.k);
+      }
+      if (e.closed) {
+        ctx.strokeStyle = COLORS.fault;
+        ctx.lineWidth = 2;
+        const n = Math.max(1, Math.floor(Math.hypot(b.x - a.x, b.y - a.y) / 30));
+        for (let i = 0; i < n; i++) {
+          const f = (i + 0.5) / n, x = a.x + (b.x - a.x) * f, y = a.y + (b.y - a.y) * f, r = 4 * this.k;
+          ctx.beginPath();
+          ctx.moveTo(x - r, y - r); ctx.lineTo(x + r, y + r);
+          ctx.moveTo(x + r, y - r); ctx.lineTo(x - r, y + r);
+          ctx.stroke();
+        }
+      }
+    }
     // Fortsetzungspfeile an Zeilenumbrüchen
     ctx.fillStyle = "#8597ab";
     for (const m of cutMarks) {
@@ -374,6 +408,11 @@ export class View {
       ctx.beginPath();
       ctx.arc(p.x, p.y, 2.3 * this.k, 0, Math.PI * 2);
       ctx.fill();
+      if (this.w.il.blockedSwitches.has(n.id)) {
+        ctx.strokeStyle = COLORS.fault;
+        ctx.lineWidth = 1.5;
+        ctx.strokeRect(p.x - 4 * this.k, p.y - 4 * this.k, 8 * this.k, 8 * this.k);
+      }
       if (this.zoom > 1.3) {
         ctx.font = this.mono(7.5);
         ctx.fillStyle = COLORS.textDim;
@@ -445,6 +484,11 @@ export class View {
         ctx.stroke();
         ctx.setLineDash([]);
       };
+      if (this.w.il.blockedSignals.has(s.id)) {
+        ctx.strokeStyle = COLORS.fault;
+        ctx.lineWidth = 1.6;
+        ctx.strokeRect(p.x - L * 0.75, p.y - Hh - 2, L * 1.5, Hh * 2 + 4);
+      }
       if (this.selected === s.id) ring(COLORS.white);
       const tgt = this.targets.get(`s${s.id}`);
       if (tgt !== undefined) ring(tgt ? COLORS.target : "#7a4b55", !tgt);
@@ -652,6 +696,17 @@ export class View {
         if (distSeg(px, py, a.x, a.y, b.x, b.y) < 6) return { kind: "train", train: t };
       }
     }
+    // Gleisabschnitt
+    let be = -1;
+    bd = 7;
+    for (const e of this.g.edges) {
+      const A = this.g.nodes[e.a], B = this.g.nodes[e.b];
+      const a = this.P(A.x + 1e-6, A.y), b = this.P(B.x - 1e-6, B.y);
+      if (Math.abs(a.y - b.y) > 80 || b.x < a.x) continue;
+      const d = distSeg(px, py, a.x, a.y, b.x, b.y);
+      if (d < bd) { bd = d; be = e.id; }
+    }
+    if (be >= 0) return { kind: "edge", edge: be };
     return null;
   }
 }

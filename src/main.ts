@@ -2,6 +2,9 @@ import { buildCorridor } from "./data/corridor";
 import { buildTrips, RawTimetable } from "./sim/timetable";
 import { Train, World } from "./sim/world";
 import { View, CAT_COLOR as VIEW_CAT } from "./render/view";
+import { TrainWindow } from "./ui/trainWindow";
+import { ContextMenu, MenuItem } from "./ui/contextMenu";
+import { radio } from "./sim/radio";
 
 const AREAS: [string, string][] = [
   ["TR", "Troisdorf"], ["SB", "Siegburg/Bonn"], ["HN", "Hennef (Sieg)"], ["BL", "Blankenberg (Sieg)"],
@@ -151,14 +154,57 @@ async function boot() {
     e.preventDefault();
     view.zoomAt(e.offsetX, e.offsetY, e.deltaY < 0 ? 1.12 : 1 / 1.12);
   }, { passive: false });
+  const ctxMenu = new ContextMenu();
   cv.addEventListener("contextmenu", (e) => {
     e.preventDefault();
-    const h = view.hit(e.offsetX, e.offsetY);
-    if (h?.kind === "signal") {
-      if (w.il.cancel(h.sig.id)) w.log(`Fahrstraße ab ${h.sig.name} zurückgenommen`);
-      else toast("Keine zurücknehmbare Fahrstraße an diesem Signal");
-    }
     clearSel();
+    const h = view.hit(e.offsetX, e.offsetY);
+    if (!h) return;
+    const items: MenuItem[] = [];
+    let title = "";
+    if (h.kind === "signal") {
+      const sg = h.sig;
+      title = `Signal ${sg.name}`;
+      const blocked = w.il.blockedSignals.has(sg.id);
+      items.push({ label: "Fahrstraße stellen …", act: () => selectStart(sg.id) });
+      items.push({ label: "Fahrstraße zurücknehmen", disabled: !sg.route, act: () => { if (w.il.cancel(sg.id)) w.log(`Fahrstraße ab ${sg.name} zurückgenommen`); else toast("Fahrstraße ist schon befahren und kann nicht mehr zurückgenommen werden"); } });
+      items.push({ label: sg.auto ? "Zuglenkung ausschalten" : "Zuglenkung einschalten", act: () => { sg.auto = !sg.auto; w.log(`Zuglenkung für ${sg.name} ${sg.auto ? "eingeschaltet" : "ausgeschaltet"}`); } });
+      items.push({ label: "Ersatzsignal (Zs 1) geben", act: () => { const why = w.giveZs1(sg.id); if (why) toast(why); } });
+      items.push({ label: blocked ? "Signalsperre aufheben" : "Signal sperren", act: () => { blocked ? w.il.blockedSignals.delete(sg.id) : w.il.blockedSignals.add(sg.id); w.log(`${sg.name} ${blocked ? "entsperrt" : "gesperrt"}`); } });
+    } else if (h.kind === "switch") {
+      const n = g.nodes[h.node];
+      title = `Weiche ${n.swName}`;
+      const blocked = w.il.blockedSwitches.has(n.id);
+      items.push({ label: "Umstellen", act: () => { const why = w.toggleSwitch(n.id); if (why) toast(why); } });
+      items.push({ label: blocked ? "Weichensperre aufheben" : "Weiche sperren (gegen Umstellen)", act: () => { blocked ? w.il.blockedSwitches.delete(n.id) : w.il.blockedSwitches.add(n.id); w.log(`Weiche ${n.swName} ${blocked ? "entsperrt" : "gesperrt"}`); } });
+    } else if (h.kind === "train") {
+      const t = h.train;
+      title = `Zug ${t.no}`;
+      items.push({ label: "Zugfenster öffnen", act: () => showTrain(t) });
+      items.push({ label: "Funk …", act: () => { tw.tab = "funk"; showTrain(t); } });
+      items.push({ label: t.hold ? "Halt aufheben (Funk)" : "Halt anordnen (Funk)", act: () => radio(w, t, t.hold ? "Weiterfahrt erlaubt" : "Sofort anhalten", t.hold ? "weiter" : "halt") });
+      items.push({ label: "Anschluss abwarten", sub: [2, 3, 5, 8, 10].map((m) => ({ label: `${m} Minuten`, act: () => radio(w, t, `Warten Sie ${m} min auf den Anschluss`, "anschluss") })) });
+      items.push({ label: "Verspätungsursache …", act: () => { tw.tab = "versp"; showTrain(t); } });
+    } else if (h.kind === "edge") {
+      const E = g.edges[h.edge];
+      const a = g.nodes[E.a];
+      title = E.platform ? `${g.stations[E.platform.st].name} Gleis ${E.platform.track}` : `Gleisabschnitt bei ${w.nearStation(a.x)}`;
+      const setSlow = (v: number) => {
+        E.slow = v || undefined;
+        w.log(v ? `Langsamfahrstelle ${v} km/h ${title} eingerichtet` : `Langsamfahrstelle ${title} aufgehoben`, v ? "warn" : "info");
+      };
+      items.push({ label: `Langsamfahrstelle${E.slow ? ` (jetzt ${E.slow})` : ""}`, sub: [
+        ...[10, 20, 30, 40, 50, 60, 80, 100].map((v) => ({ label: `${v} km/h`, act: () => setSlow(v) })),
+        { label: "aufheben", disabled: !E.slow, act: () => setSlow(0) },
+      ] });
+      items.push({ label: E.closed ? "Sperrung aufheben" : "Gleis sperren", act: () => {
+        if (!E.closed && (E.lock || E.occ)) return toast("Abschnitt ist belegt oder in einer Fahrstraße, erst räumen");
+        E.closed = !E.closed;
+        w.log(`${title} ${E.closed ? "gesperrt" : "wieder frei"}`, E.closed ? "warn" : "info");
+      } });
+      items.push({ label: `Länge ${E.len} m · zulässig ${E.vmax} km/h`, disabled: true });
+    } else return;
+    ctxMenu.show(e.clientX, e.clientY, title, items);
   });
 
   const click = (x: number, y: number, shift: boolean, ctrl = false) => {
@@ -215,38 +261,17 @@ async function boot() {
     selectStart(s.id);
   };
 
-  // ---------- Zugkarte ----------
-  const card = $("card");
-  let cardTrain: Train | null = null;
+  // ---------- Zugfenster ----------
+  const tw = new TrainWindow(w, g, CAT_COLOR, () => (view.focusTrain = null), (m) => toast(m));
+  tw.onCenter = (t) => {
+    const e = g.edges[t.body[t.body.length - 1]];
+    view.centerOn(g.nodes[e.a].x, g.nodes[e.a].y);
+  };
   const showTrain = (t: Train) => {
-    cardTrain = t;
     view.focusTrain = t;
-    renderCard();
-    card.classList.remove("hidden");
+    tw.show(t);
   };
-  const renderCard = () => {
-    const t = cardTrain;
-    if (!t) return;
-    if (t.gone) {
-      card.classList.add("hidden");
-      cardTrain = null;
-      view.focusTrain = null;
-      return;
-    }
-    const tr = t.trip;
-    const rows = t.stops.map((s, i) => `<tr class="${s.done ? "done" : i === t.stopIdx ? "cur" : ""}"><td>${g.stations[s.st].name}${s.missed ? " ✕" : ""}</td><td>${hm(s.arr)}</td><td>${hm(s.dep)}</td></tr>`).join("");
-    const dm = Math.round(t.delay / 60);
-    card.innerHTML = `<button class="x">×</button><h2 style="color:${CAT_COLOR[t.cat]}">${t.no}</h2>
-      <div class="meta">${tr.from} → ${tr.to}<br>${t.len} m · ${Math.round(t.vmax * 3.6)} km/h${tr.mass ? ` · ${tr.mass} t` : ""} · jetzt ${Math.round(t.v * 3.6)} km/h ·
-      <span class="${dm >= 6 ? "bad" : dm >= 3 ? "warn" : "ok"}">${dm > 0 ? `+${dm} min` : "pünktlich"}</span></div>
-      ${rows ? `<table><tr><td></td><td>an</td><td>ab</td></tr>${rows}</table>` : ""}
-      <div class="meta" style="margin-top:8px">${tr.exitPortal ? `Ausfahrt Richtung ${g.portals[tr.exitPortal].label}` : tr.turnInto ? `Wendet als ${tr.turnInto.no}` : "Endet hier"}${t.nextSig ? ` · nächstes Signal ${w.il.sig(t.nextSig).name}` : ""}</div>`;
-    card.querySelector<HTMLButtonElement>(".x")!.onclick = () => {
-      card.classList.add("hidden");
-      cardTrain = null;
-      view.focusTrain = null;
-    };
-  };
+  const renderCard = () => tw.render();
 
   // ---------- Seitenleiste ----------
   const isMine = (sid: number) => sid && !w.il.sig(sid).auto;

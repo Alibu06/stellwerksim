@@ -36,6 +36,13 @@ export interface GEdge {
   occ: number; // Anzahl Züge im Abschnitt
   lock: number; // Fahrstraßen-ID oder 0
   overlap: number; // Durchrutschweg-ID oder 0
+  slow?: number; // Langsamfahrstelle (km/h)
+  closed?: boolean; // Gleis gesperrt
+}
+
+// zulässige Geschwindigkeit einer Kante unter Berücksichtigung von Langsamfahrstellen
+export function vEdge(e: GEdge): number {
+  return e.slow ? Math.min(e.vmax, e.slow) : e.vmax;
 }
 
 export type SignalKind = "main" | "block";

@@ -107,11 +107,16 @@ export class Interlocking {
   }
 
   // Prüft, ob die Fahrstraße eingestellt werden kann. Liefert Grund bei Ablehnung.
+  blockedSignals = new Set<number>();
+  blockedSwitches = new Set<number>();
+
   check(p: PathDef): string | null {
     const g = this.g;
     if (this.sig(p.sig).route) return "Startsignal hat bereits eine Fahrstraße";
+    if (this.blockedSignals.has(p.sig)) return "Signal ist gesperrt";
     for (const e of p.edges) {
       const E = g.edges[e];
+      if (E.closed) return "Gleis im Fahrweg gesperrt";
       if (E.occ) return "Fahrweg besetzt";
       if (E.lock) return "Fahrweg durch andere Fahrstraße belegt";
       if (E.overlap) {
@@ -122,6 +127,7 @@ export class Interlocking {
     for (const { node, pos } of p.sw) {
       if (g.nodes[node].swPos !== pos && this.faultySwitches.has(node)) return `Weiche ${g.nodes[node].swName} gestört`;
       if (g.nodes[node].swPos !== pos && this.switchLocked(node)) return `Weiche ${g.nodes[node].swName} verschlossen`;
+      if (g.nodes[node].swPos !== pos && this.blockedSwitches.has(node)) return `Weiche ${g.nodes[node].swName} ist gesperrt`;
     }
     for (const e of this.overlapFor(p)) {
       const E = g.edges[e];
