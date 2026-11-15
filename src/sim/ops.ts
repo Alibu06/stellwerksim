@@ -176,7 +176,7 @@ export class Ops {
         return null;
       }
       case "liegen": {
-        w.rescueRequest(D.train, k === "nochmal" && !timeout);
+        w.rescueRequest(D.train, k === "nochmal" && !timeout, k === "techniker" && !timeout);
         if (timeout) w.log("Notfallmanager hat die Hilfslok selbst angefordert", "info");
         return null;
       }

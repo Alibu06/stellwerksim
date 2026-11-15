@@ -1045,13 +1045,21 @@ export class World {
     for (const r of [...this.il.routes.values()]) {
       let orphan = false;
       if (r.used) orphan = r.train !== undefined && !this.trains.some((t) => t.id === r.train);
-      else orphan = this.il.sig(r.path.sig).auto && !this.trains.some((t) => t.nextSig === r.path.sig || (t.body.length && this.g.edges[t.body[t.body.length - 1]].lock === r.id));
+      else if (this.il.sig(r.path.sig).auto) orphan = !this.trains.some((t) => t.nextSig === r.path.sig || (t.body.length && this.g.edges[t.body[t.body.length - 1]].lock === r.id));
+      else {
+        // vom Spieler gestellt: nur zurücknehmen, wenn weit und breit kein Zug darauf zufährt (z. B. Zug ist schon weg oder endet)
+        const sg = this.il.sig(r.path.sig), sS = this.g.nodes[sg.node].s ?? 0;
+        orphan = !this.trains.some((t) => t.nextSig === r.path.sig || (t.dir === sg.dir && t.body.length && (sS - this.headS(t)) * sg.dir > -30 && (sS - this.headS(t)) * sg.dir < 8000));
+      }
       if (!orphan) { this.orphanSince.delete(r.id); continue; }
       const since = this.orphanSince.get(r.id) ?? this.time;
       this.orphanSince.set(r.id, since);
-      if (this.time - since < 180) continue;
+      if (this.time - since < (r.used || this.il.sig(r.path.sig).auto ? 180 : 300)) continue;
       this.orphanSince.delete(r.id);
-      if (!r.used) { this.il.cancel(r.path.sig); continue; }
+      if (!r.used) {
+        if (!this.il.sig(r.path.sig).auto) this.log(`Fahrstraße ${this.il.sig(r.path.sig).name} → ${r.path.endSig ? this.il.sig(r.path.endSig).name : r.path.endPortal} zurückgenommen: seit 5 min kommt kein Zug`, "info");
+        this.il.cancel(r.path.sig); continue;
+      }
       for (const e of r.path.edges) if (this.g.edges[e].lock === r.id && !this.g.edges[e].occ) this.g.edges[e].lock = 0;
       this.il.releaseOverlap(r);
       this.il.routes.delete(r.id);
@@ -1064,7 +1072,7 @@ export class World {
   // Ein Triebfahrzeug fällt auf der freien Strecke endgültig aus. Die Hilfslok (Diesel der Notfalltechnik) kommt
   // aus Köln-Gremberg oder Siegen als Lokzug bis zum nächsten Bahnhof vor dem Zug, fährt von dort als Sperrfahrt
   // ins gesperrte Gleis, kuppelt vorne an und zieht den Zug bis zu diesem Bahnhof, wo er endet.
-  rescues: { broken: number; no: string; st: string; phase: number; at: number; lzKey?: number; tries: number }[] = [];
+  rescues: { broken: number; no: string; st: string; phase: number; at: number; lzKey?: number; tries: number; start?: number }[] = [];
   breakdown(): string | null {
     const g = this.g, r = this.rand;
     if (this.rescues.length) return "es läuft schon ein Hilfseinsatz";
@@ -1081,7 +1089,7 @@ export class World {
       t.fault = `Zug liegt fest: ${what}`;
       t.faultUntil = 1e12;
       t.radio.push({ t: this.time, from: "tf", text: `${t.no}: Mein Zug ist liegengeblieben bei km ${(hs / 1000).toFixed(1).replace(".", ",")}. ${what}. Ich versuche die Störung zu beheben.` });
-      this.rescues.push({ broken: t.id, no: t.no, st, phase: 0, at: this.time + 480 + r() * 240, tries: 0 });
+      this.rescues.push({ broken: t.id, no: t.no, st, phase: 0, at: this.time + 480 + r() * 240, tries: 0, start: this.time });
       this.addFault("vehicle", t.id, 1e12, `${t.no} liegt bei km ${(hs / 1000).toFixed(1).replace(".", ",")} fest (${what})`);
       this.log(`${t.no} ist bei km ${(hs / 1000).toFixed(1).replace(".", ",")} liegengeblieben: ${what}. Tf versucht die Störung zu beheben`, "bad");
       this.note("Störung", `${t.no} liegt bei km ${(hs / 1000).toFixed(1).replace(".", ",")} fest: ${what}`);
@@ -1111,7 +1119,7 @@ export class World {
       stops: [{ st: R.st, arr: at + run, dep: at + run + 60 } as any], from: portal === "E_BZ" ? "Siegen (Notfalltechnik)" : "Köln-Gremberg (Notfalltechnik)", to: this.g.stations[R.st].name };
   }
   // Antwort auf die Frage, wie es weitergeht (aus Ops)
-  rescueRequest(id: number, retry: boolean) {
+  rescueRequest(id: number, retry: boolean, tech = false) {
     const R = this.rescues.find((x) => x.broken === id);
     const o = this.trains.find((x) => x.id === id);
     if (!R || !o) return;
@@ -1129,6 +1137,12 @@ export class World {
       }
       R.phase = 0; R.at = this.time + 600;
       o.radio.push({ t: this.time, from: "tf", text: `${o.no}: Verstanden, ich probiere es noch einmal mit Zurücksetzen der Fahrzeugsteuerung.` });
+      return;
+    }
+    if (tech) {
+      R.phase = 5; R.at = this.time + 1800 + this.rand() * 1200;
+      o.radio.push({ t: this.time, from: "tf", text: `${o.no}: Verstanden, ich warte auf den Techniker.` });
+      this.log(`Techniker ist unterwegs zu ${o.no}, voraussichtlich vor Ort und fertig in ca. ${Math.round((R.at - this.time) / 60)} min`, "info");
       return;
     }
     const q = this.rescueTrip(R);
@@ -1205,9 +1219,22 @@ export class World {
         R.phase = 1;
         o.radio.push({ t: this.time, from: "tf", text: `${o.no}: Die Störung lässt sich nicht beheben, der Zug kommt aus eigener Kraft nicht mehr weg.` });
         this.ops.call(`Tf ${o.no}`, "liegen", `${o.no} kommt aus eigener Kraft nicht mehr weg. Soll ich eine Hilfslok anfordern? Sie kommt von vorne und zieht den Zug bis ${this.g.stations[R.st].name}. Oder ich versuche es noch ein letztes Mal.`,
-          [{ k: "lok", label: "Hilfslok anfordern" }, { k: "nochmal", label: "Noch einmal versuchen (10 min)" }], 240, { train: o.id });
+          [{ k: "lok", label: "Hilfslok anfordern" }, { k: "techniker", label: "Techniker schicken (ca. 30–50 min)" }, { k: "nochmal", label: "Noch einmal versuchen (10 min)" }], 240, { train: o.id });
       }
       if (u && !u.rescue) u.rescue = o.id;
+      // Techniker vor Ort, oder die Hilfslok kommt nicht durch: nach spätestens 100 min repariert der Techniker den Zug notdürftig
+      const late = R.phase >= 2 && R.phase !== 5 && R.phase !== 6 && this.time - (R.start ?? R.at) > 6000;
+      if ((R.phase === 5 && this.time >= R.at) || late) {
+        this.rescues = this.rescues.filter((x) => x !== R);
+        if (u) { u.rescue = undefined; if (u.shunt || u.dwelling) u.dissolveAt = this.time + 60; }
+        o.fault = "Notdürftig repariert, fährt langsam bis zum nächsten Bahnhof";
+        o.faultUntil = this.time + 60; o.towed = true;
+        this.rescueEndAt(o, R.st);
+        this.faults = this.faults.filter((f) => !(f.kind === "vehicle" && f.target === o.id));
+        o.radio.push({ t: this.time, from: "tf", text: `${o.no}: Der Techniker hat den Zug notdürftig wieder fahrbereit gemacht. Ich fahre langsam bis ${this.g.stations[R.st].name}, dort ist Schluss.` });
+        this.log(`${o.no}: ${late ? "Hilfslok kommt nicht durch, " : ""}Techniker hat den Zug notdürftig repariert, er fährt langsam bis ${this.g.stations[R.st].name} und endet dort`, "info");
+        continue;
+      }
       if ((R.phase === 2 || R.phase === 3) && !u && R.lzKey && !this.pending.some((q) => q.key === R.lzKey)) { R.lzKey = undefined; this.rescueRequest(o.id, false); continue; }
       if ((R.phase === 2 || R.phase === 3) && u && u.dwelling && this.headEdge(u).platform?.st === R.st && this.time >= R.at) {
         if (this.manualSt(R.st) && R.phase === 2) {
@@ -1694,6 +1721,8 @@ export class World {
   // unterwegs ist, und dabei das letzte freie Gleis für den Gegenzug zustellen?
   private crossingBlocked(t: Train, p: PathDef): boolean {
     // Einfahrt in den eingleisigen Abschnitt nur, wenn im Kreuzungsbahnhof am anderen Ende ein Gleis frei ist
+    // Hat der Fdl am anderen Ende die Einfahrt für diese Richtung schon gestellt, ist die Kreuzung entschieden
+    if (p.endSig) { const r = this.il.routes.get(this.il.sig(p.endSig).route); if (r && r.path.dir === t.dir) return false; }
     for (const S of this.singles) {
       if (!p.edges.some((e) => S.edges.has(e))) continue;
       let far = [...S.gates].filter(([, d]) => d !== t.dir);
@@ -2522,7 +2551,9 @@ export class World {
       else if (t.nextSig && !this.il.proceeds(this.il.sig(t.nextSig), this.time)) out.push({ text: `Abfahrbereit, wartet auf Ausfahrt ${this.il.sig(t.nextSig).name}`, kind: "warn" });
       else out.push({ text: "Abfahrbereit", kind: "ok" });
     } else if (t.v < 0.1) {
-      if (t.nextSig && t.distNextSig < 60) out.push({ text: `Steht vor Halt zeigendem Signal ${this.il.sig(t.nextSig).name} ${t.waitRed < 60 ? "(gerade eben)" : `seit ${Math.floor(t.waitRed / 60)} min`}`, kind: t.waitRed > 120 ? "bad" : "warn" });
+      if (t.nextSig && t.distNextSig < 60 && this.il.proceeds(this.il.sig(t.nextSig), this.time)) {
+        if (!t.hold && !(t.faultUntil > this.time)) out.push({ text: `${this.il.sig(t.nextSig).name} zeigt Fahrt, Zug fährt an`, kind: "info" });
+      } else if (t.nextSig && t.distNextSig < 60) out.push({ text: `Steht vor Halt zeigendem Signal ${this.il.sig(t.nextSig).name} ${t.waitRed < 60 ? "(gerade eben)" : `seit ${Math.floor(t.waitRed / 60)} min`}`, kind: t.waitRed > 120 ? "bad" : "warn" });
       else out.push({ text: "Steht", kind: "warn" });
     } else {
       out.push({ text: `Fährt ${Math.round(t.v * 3.6)} km/h (zulässig ${Math.round(Math.min(t.vmax * 3.6, vEdge(E)))})`, kind: "ok" });

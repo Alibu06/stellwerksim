@@ -566,7 +566,7 @@ export class Extras {
       } else {
         const t = w.trains.find((x) => x.id === f.target);
         out.push({ ...base, kind: "zug", icon: "🚆", title: f.kind === "door" ? `Türstörung ${t?.no ?? ""}` : `Fahrzeugstörung ${t?.no ?? ""}`, where: t ? w.position(t).text : "",
-          effect: f.kind === "door" ? "Der Zug kann nicht abfahren, bis die Tür geschlossen ist. Folgezüge auf diesem Gleis warten." : f.until - now > 86400 ? "Der Zug liegt fest und braucht eine Hilfslok. Sie kommt als Lokzug bis zum nächsten Bahnhof vor dem Zug und fährt von dort mit Befehl als Sperrfahrt an den Zug. Bis dahin ist das Gleis gesperrt, Folgezüge warten oder wenden." : "Der Zug steht, der Tf sucht den Fehler. Das Gleis ist so lange blockiert, Folgezüge müssen warten oder umgeleitet werden.",
+          effect: f.kind === "door" ? "Der Zug kann nicht abfahren, bis die Tür geschlossen ist. Folgezüge auf diesem Gleis warten." : f.until - now > 86400 ? "Der Zug liegt fest. Entweder kommt eine Hilfslok (als Lokzug bis zum nächsten Bahnhof vor dem Zug, von dort mit Befehl als Sperrfahrt an den Zug) oder ein Techniker repariert ihn vor Ort (30 bis 50 min). Bis dahin ist das Gleis gesperrt, Folgezüge warten, wenden oder fahren über das Gegengleis." : "Der Zug steht, der Tf sucht den Fehler. Das Gleis ist so lange blockiert, Folgezüge müssen warten oder umgeleitet werden.",
           trains: t ? [t.no] : [] });
       }
     }

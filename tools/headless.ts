@@ -13,7 +13,9 @@ const start = Number(process.argv[2] ?? 5) * 3600, hours = Number(process.argv[3
 const w = new World(g, trips, start); const ALL: string[] = []; const _log = w.log.bind(w); w.log = (t: string, k?: any) => { ALL.push(`${Math.floor(w.time / 3600)}:${String(Math.floor(w.time / 60) % 60).padStart(2, "0")} ${t}`); _log(t, k); }; w.faultRate = Number(process.env.F ?? 1);
 w.trackPlan = JSON.parse(readFileSync(new URL("../public/data/tracks.json", import.meta.url), "utf8"));
 w.ext.start({ ...DEFAULT_FEATURES, faults: w.faultRate }, start);
-for (const s of g.signals) s.auto = true;
+const PL = process.env.PLAYER && process.env.PLAYER !== "1" ? new Set(process.env.PLAYER.split(",")) : null;
+for (const s of g.signals) s.auto = !process.env.PLAYER || s.kind === "block" || (!!PL && !PL.has(s.name.slice(0, 2)));
+if (PL) w.manualAreas = new Set(PL);
 if (process.env.NOLUE || process.env.NOOPS) { w.ops.lueConflict = () => null; for (const t of trips) if (t.special === "Lü") t.special = undefined; }
 if (process.env.NOOPS) w.ops.step = () => {};
 if (process.env.MAN) { w.zugmeldung = false; w.manualAreas = new Set(["TR","SB","HN","BL","EI","AU","WI","BZ"]); }
@@ -22,12 +24,57 @@ const noPath = g.signals.filter((s) => !(w.il.paths.get(s.id)?.length));
 console.log("Signale ohne Fahrstraße:", noPath.map((s) => s.name).join(", "));
 if (process.env.ROT) w.ops.nextRotte = Number(process.env.ROT) * 3600;
 let ol = Number(process.env.OL ?? 0) * 3600;
+const ovlStill = new Map<string, number>(); const greenSince = new Map<number, number>(); const seenBad = new Set<string>();
+function chk() {
+  const W: any = w;
+  for (const t of w.trains) {
+    const s = t.nextSig ? w.il.sig(t.nextSig) : undefined;
+    if (s && t.v < 0.1 && !t.dwelling && t.distNextSig < 60 && w.il.proceeds(s, w.time) && !t.shunt) {
+      const since = greenSince.get(t.id) ?? w.time; greenSince.set(t.id, since);
+      if (w.time - since > 60 && !seenBad.has("g" + t.id)) { seenBad.add("g" + t.id); const la = W.lookahead ? W.lookahead(t) : null; console.log("GREENSTOP", hm(), t.no, "hold", t.hold, "fault", t.faultUntil > w.time ? t.fault : "", "sight", t.sight, s.name, Math.round(t.distNextSig), w.position(t).text, "|", w.status(t).map((x: any) => x.text).join(" | "), la ? JSON.stringify({ sd: la.stopDist, pf: la.platformStop }) : ""); }
+    } else greenSince.delete(t.id);
+  }
+  for (const E of g.edges) {
+    if (E.overlap) { const r = w.il.routes.get(E.overlap); const tr = r && w.trains.find((x) => x.id === r.train); const k = "o" + E.id + ":" + E.overlap;
+      if (!r) { if (!seenBad.has(k)) { seenBad.add(k); console.log("OVL-NOROUTE", hm(), E.id); } }
+      else if (r.used && !tr) { if (!seenBad.has(k)) { seenBad.add(k); console.log("OVL-NOTRAIN", hm(), E.id, w.il.sig(r.path.sig).name); } }
+      else if (tr && tr.v < 0.05) { const st = (ovlStill.get(k) ?? w.time); ovlStill.set(k, st); if (w.time - st > 90 && !seenBad.has(k)) { seenBad.add(k); console.log("OVL-STILL", hm(), E.id, w.il.sig(r.path.sig).name, "->", r.path.endSig ? w.il.sig(r.path.endSig).name : "", tr.no, "dwell", tr.dwelling, "stillT", Math.round((tr as any).stillT ?? -1), "shunt", !!tr.shunt, "parked", !!tr.parked, w.position(tr).text, "|", w.status(tr).map((x: any) => x.text).join(" | ")); } }
+      else ovlStill.delete(k); }
+    if (E.occ && !w.trains.some((x) => x.body.includes(E.id))) { const k = "occ" + E.id; if (!seenBad.has(k)) { seenBad.add(k); console.log("GHOSTOCC", hm(), E.id, Math.round(g.nodes[E.a].s ?? 0), "y", g.nodes[E.a].y, "occ", E.occ); } }
+    if (E.lock < 0) { const tr = w.trains.find((x) => x.id === -E.lock); if (!tr || !tr.shunt) { const k = "l" + E.id + ":" + E.lock; if (!seenBad.has(k)) { seenBad.add(k); console.log("GHOSTLOCK-", hm(), E.id, Math.round(g.nodes[E.a].s ?? 0), "train", tr?.no ?? "weg", tr ? "noshunt" : ""); } } }
+    else if (E.lock > 0 && !w.il.routes.has(E.lock)) { const k = "r" + E.id + ":" + E.lock; if (!seenBad.has(k)) { seenBad.add(k); console.log("GHOSTLOCK+", hm(), E.id, Math.round(g.nodes[E.a].s ?? 0)); } }
+  }
+}
+function hm() { return `${Math.floor(w.time / 3600)}:${String(Math.floor(w.time / 60) % 60).padStart(2, "0")}`; }
+const holdS = new Map<number, boolean>(); const qWhy = new Map<number, string>(); const qSeen = new Set<string>();
+function player() {
+  const W: any = w;
+  for (const t of w.trains) {
+    if (!t.nextSig || t.distNextSig > 1500 || t.shunt || (t.distNextSig < 30 && t.v > 0.5)) continue;
+    const s = w.il.sig(t.nextSig);
+    if (s.auto || s.route || w.queued.some((q) => q.start === s.id)) continue;
+    if (t.dwelling && t.dwellUntil - w.time > 60) continue;
+    if (t.dwelling && t.stopIdx === t.stops.length - 1 && !t.trip.exitPortal) continue;
+    const paths = w.il.paths.get(s.id) ?? [];
+    if (!paths.length) continue;
+    const goal = W.goalKey(t);
+    const best = W.bestPath(t, paths) ?? [...paths].sort((a: any, b: any) => W.pathCost(a, t, goal) - W.pathCost(b, t, goal))[0];
+    const end = best.endSig || best.endPortal;
+    const why = w.setRoute(s.id, end);
+    if (process.env.PDBG) console.log("PSET", hm(), t.no, s.name, "->", typeof end === "string" ? end : w.il.sig(end).name, why ?? "OK", "dwell", t.dwelling, "parked", !!t.parked, "bereit", !!t.bereit, "stop", t.stopIdx, t.stops.length, "dist", Math.round(t.distNextSig), w.position(t).text);
+    if (why && w.canQueue(why)) { w.queueRoute(s.id, end); qWhy.set(s.id, why); }
+  }
+  for (const q of w.queued) if (w.time - q.t > 240) { const k = q.start + ":" + q.t; if (qSeen.has(k)) continue; qSeen.add(k); const why = w.setRoute(q.start, q.end) ?? "OK jetzt"; console.log("QSTUCK", hm(), w.il.sig(q.start).name, "->", typeof q.end === "string" ? q.end : w.il.sig(q.end).name, "|", qWhy.get(q.start), "|", why, "|", w.trains.find((t) => t.nextSig === q.start)?.no ?? ""); }
+}
 let lastH = -1; let brk = Number(process.env.BRK ?? 0) * 3600;
 while (w.time < start + hours * 3600) {
   w.step(0.5);
   if (ol && w.time >= ol) { const r = w.ext.startHappening("ol"); console.log("OL", r ?? "ok"); ol = r ? w.time + 300 : 0; }
   if (brk && w.time >= brk) { const r = w.breakdown(); console.log("BRK", r ?? "ok"); brk = r ? w.time + 300 : 0; }
   if (process.env.ANS) for (const c of w.ops.calls) if (!c.answered && w.time - c.t > 60) { const r = w.ops.answer(c.id, c.opts[0].k); console.log("ANS", c.kind, c.text.slice(0, 80), "->", r ?? "ok"); }
+  if (process.env.CHK && Math.round(w.time) % 30 === 0) chk();
+  if (process.env.HOLD) for (const t of w.trains) { if (holdS.get(t.id) !== t.hold) { holdS.set(t.id, t.hold); console.log("HOLD", hm(), t.id, t.no, t.hold, "notruf", JSON.stringify(w.ops.notruf?.trains ?? null)); } }
+  if (process.env.PLAYER && Math.round(w.time) % 5 === 0) player();
   const h = Math.floor(w.time / 3600);
   if (h !== lastH) {
     lastH = h;
@@ -46,3 +93,4 @@ if (process.env.SW) for (const nm of process.env.SW.split(",")) { const n = g.no
 if (process.env.RT) for (const r of w.il.routes.values()) { const tr = w.trains.find((t) => t.id === r.train); if (tr && process.env.RT.split(",").includes(tr.no)) console.log("RT", tr.no, w.il.sig(r.path.sig).name, "->", r.path.endSig ? w.il.sig(r.path.endSig).name : r.path.endPortal, "used", r.used); }
 if (process.env.LK) { const [a, b] = process.env.LK.split(",").map(Number); for (const E of g.edges) { const sa = g.nodes[E.a].s ?? -1e9, sb = g.nodes[E.b].s ?? -1e9; if (Math.min(sa, sb) < b && Math.max(sa, sb) > a && (E.lock || E.occ || E.overlap)) { const r = E.lock > 0 ? w.il.routes.get(E.lock) : undefined; console.log("LK", E.id, Math.round(sa), Math.round(sb), "y", g.nodes[E.a].y, g.nodes[E.b].y, "occ", E.occ, w.trains.find((t) => t.body.includes(E.id))?.no ?? "", "lock", E.lock, r ? `${w.il.sig(r.path.sig).name}->${r.path.endSig ? w.il.sig(r.path.endSig).name : ""} ${w.trains.find((t) => t.id === r.train)?.no ?? "-"}` : "", "ovl", E.overlap, E.platform ? "P" + E.platform.track : ""); } } }
 if (process.env.COST) for (const no of process.env.COST.split(",")) { const t = w.trains.find((x) => x.no === no); if (!t) continue; const W: any = w; const goal = W.goalKey(t); for (const p of w.il.paths.get(t.nextSig) ?? []) console.log("COST", no, w.il.sig(t.nextSig).name, "->", p.endSig ? w.il.sig(p.endSig).name : p.endPortal, Math.round(W.pathCost(p, t, goal)), "single", W.singleTrackBlocked(t, p), "grab", W.grabsLastTrack(t, p), "chk", w.il.check(p), "wait", Math.round(t.waitRed)); }
+if (process.env.TR) for (const t of w.trains.filter((x) => process.env.TR!.split(",").includes(x.no))) console.log("TR", t.id, t.no, Math.round(w.headS(t)), t.dir, w.position(t).text, "|", w.status(t).map((x) => x.text).join(" | "), "key", t.trip.key, "turnedFrom", !!t.trip.turnedFrom);
