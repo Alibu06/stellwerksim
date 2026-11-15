@@ -219,3 +219,20 @@ select.trk { background: #151d27; color: #fff; border: 1px solid var(--line); bo
 .themePick { margin: 14px 0 4px; font-size: 13px; color: var(--dim); display: flex; gap: 6px; align-items: center; }
 .themePick button { background: #18212c; border: 1px solid var(--line); border-radius: 6px; padding: 5px 12px; color: var(--dim); }
 .themePick button.on { background: #173246; color: #fff; border-color: #2a6a8a; }
+
+#orderDlg { position: fixed; inset: 0; background: #0008; z-index: 30; display: flex; align-items: center; justify-content: center; }
+#orderDlg.hidden { display: none; }
+#orderDlg .od { width: 520px; background: #111821; border: 1px solid #2b3747; border-radius: 10px; padding: 16px 18px; font-size: 13px; box-shadow: 0 20px 50px #000a; }
+#orderDlg h3 { margin: 0 0 6px; font-size: 16px; }
+#orderDlg .odh { color: var(--dim); margin: 0 0 12px; line-height: 1.4; }
+#orderDlg label { display: block; padding: 9px 10px; border: 1px solid var(--line); border-radius: 7px; margin-bottom: 8px; cursor: pointer; }
+#orderDlg label.dis { opacity: .6; cursor: default; }
+#orderDlg label small { display: block; color: var(--dim); margin: 4px 0 0 22px; line-height: 1.4; }
+#orderDlg select { background: #0d141c; color: #fff; border: 1px solid var(--line); border-radius: 5px; padding: 2px 4px; font: inherit; font-size: 12px; }
+#orderDlg .odb { display: flex; gap: 8px; justify-content: flex-end; margin-top: 12px; }
+#orderDlg .odb button { background: #1f6f3f; border: 1px solid #2fd27a; color: #fff; border-radius: 6px; padding: 7px 14px; }
+#orderDlg .odb button.ghost { background: #18212c; border-color: var(--line); }
+#tab-faults ol.steps { margin: 6px 0 0 18px; padding: 0; } #tab-faults ol.steps li { margin: 4px 0; line-height: 1.4; } #tab-faults ol.steps li.done { color: var(--good); }
+#tab-faults ol.steps button { margin: 3px 0 0; display: block; }
+#tab-faults .book div { font-size: 11.5px; padding: 3px 0; border-bottom: 1px solid #18212c; line-height: 1.35; }
+#tab-faults .book time { font-family: "JetBrains Mono", monospace; color: var(--dim); margin-right: 5px; } #tab-faults .book b { color: var(--accent); margin-right: 4px; }

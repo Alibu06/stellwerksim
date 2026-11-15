@@ -24,7 +24,9 @@ export function saveGame(w: World, meta: Omit<SaveMeta, "savedAt">): string {
     connAlerts: w.connAlerts,
     dispTrack: [...w.dispTrack],
     queued: w.queued,
-    edges: g.edges.map((e) => [e.occ, e.lock, e.overlap, e.slow ?? 0, e.closed ? 1 : 0, e.work ? 1 : 0]),
+    book: w.book, azSections: w.azSections, azId: w.azId, azCount: w.azCount, orders: w.orders, orderNo: w.orderNo, pendingRadio: w.pendingRadio.map(({ then, ...x }) => x),
+    lastOnEdge: [...w.lastOnEdge],
+    edges: g.edges.map((e) => [e.occ, e.lock, e.overlap, e.slow ?? 0, e.closed ? 1 : 0, e.work ? 1 : 0, e.az ?? 0]),
     sw: g.nodes.filter((n) => n.swSide !== undefined).map((n) => [n.id, n.swPos]),
     sigs: g.signals.map((s) => [s.route, s.auto ? 1 : 0]),
     il: {
@@ -70,12 +72,16 @@ export function loadGame(w: World, json: string, allTrips: TripSpec[]) {
   w.connAlerts = d.connAlerts ?? [];
   w.dispTrack = new Map(d.dispTrack ?? []);
   w.queued = d.queued ?? [];
+  w.book = d.book ?? []; w.azSections = d.azSections ?? []; w.azId = d.azId ?? 1; w.azCount = d.azCount ?? 0;
+  w.orders = d.orders ?? []; w.orderNo = d.orderNo ?? 1; w.pendingRadio = d.pendingRadio ?? [];
+  w.lastOnEdge = new Map(d.lastOnEdge ?? []);
   d.edges.forEach((x: number[], i: number) => {
     const e = g.edges[i];
     [e.occ, e.lock, e.overlap] = x;
     e.slow = x[3] || undefined;
     e.closed = x[4] ? true : undefined;
     e.work = x[5] ? true : undefined;
+    e.az = x[6] || undefined;
   });
   for (const [id, pos] of d.sw) g.nodes[id].swPos = pos;
   d.sigs.forEach((x: number[], i: number) => { g.signals[i].route = x[0]; g.signals[i].auto = !!x[1]; });

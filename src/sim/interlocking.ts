@@ -118,6 +118,7 @@ export class Interlocking {
       const E = g.edges[e];
       if (E.closed) return "Gleis im Fahrweg gesperrt";
       if (E.occ) return "Fahrweg besetzt";
+      if (E.az) return E.az === 1 ? "Fahrweg besetzt gemeldet (Achszähler gestört, erst Grundstellung)" : "Abschnitt nach Grundstellung nicht frei gemeldet: Zug mit Befehl (Räumungsprüfung) durchfahren lassen";
       if (E.lock) return "Fahrweg durch andere Fahrstraße belegt";
       if (E.overlap) {
         const r = this.routes.get(E.overlap);

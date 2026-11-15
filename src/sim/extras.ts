@@ -524,6 +524,12 @@ export class Extras {
         out.push({ ...base, kind: "stoerung", icon: "⚠", title: `Signalstörung ${sg.name}`, where: w.nearStation(n.x),
           effect: "Das Signal zeigt nur Halt. Züge fahren erst mit Ersatzsignal (Zs1) weiter, danach auf Sicht bis zum nächsten Signal. Jeder Zug verliert so 1 bis 3 Minuten.",
           trains: w.trains.filter((t) => t.nextSig === f.target).map((t) => t.no) });
+      } else if (f.kind === "az") {
+        const sec = w.azSections.find((x) => x.id === f.target);
+        out.push({ ...base, kind: "stoerung", icon: "⚠", title: `Gleisfreimeldung gestört ${sec?.name ?? ""}`, where: sec?.name ?? "",
+          effect: sec?.state === 2 ? "Grundstellung ist erfolgt. Der nächste Zug fährt mit schriftlichem Befehl auf Sicht durch (Räumungsprüfung), danach ist der Abschnitt wieder frei."
+            : "Der Abschnitt zeigt besetzt, keine Fahrstraße hinein. Ablauf: Zugschluss des letzten Zuges prüfen, Grundstellung, dann Räumungsprüfung mit Befehl. Ohne dich behebt ein Techniker das erst nach Stunden.",
+          trains: sec ? affected(sec.edges) : [] });
       } else if (f.kind === "bue") {
         const c = this.crossings.find((x) => x.id === f.target);
         out.push({ ...base, kind: "bue", icon: "⛔", title: `BÜ gestört: ${c?.name ?? ""}`, where: c ? loc(c.edges) : "",

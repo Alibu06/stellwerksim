@@ -358,6 +358,7 @@ export class View {
   private edgeStyle(eid: number): { color: string; dash?: number[] } {
     const e = this.g.edges[eid];
     if (e.occ) return { color: COLORS.occupied };
+    if (e.az) return { color: e.az === 2 ? COLORS.yellow : COLORS.occupied, dash: e.az === 2 ? [6, 4] : [2, 3] };
     if (e.lock) {
       const r = this.w.il.routes.get(e.lock);
       if (r && r.readyAt > this.w.time && Math.floor(this.blink * 3) % 2) return { color: COLORS.yellow };

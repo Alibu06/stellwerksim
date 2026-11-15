@@ -237,6 +237,30 @@ async function boot() {
     e.preventDefault();
     view.zoomAt(e.offsetX, e.offsetY, e.deltaY < 0 ? 1.12 : 1 / 1.12);
   }, { passive: false });
+  // ---------- Schriftlicher Befehl (Dialog) ----------
+  const dlg = document.createElement("div");
+  dlg.id = "orderDlg";
+  dlg.className = "hidden";
+  document.body.append(dlg);
+  const openOrder = (t: Train) => {
+    const can = w.orderCheck(t, "vorbei");
+    const sigName = t.nextSig ? w.il.sig(t.nextSig).name : "–";
+    dlg.innerHTML = `<div class="od"><h3>Schriftlicher Befehl an ${t.no}</h3>
+      <p class="odh">Der Befehl wird per Funk diktiert. Der Triebfahrzeugführer schreibt mit und wiederholt ihn, du bestätigst mit „Richtig“. Danach gilt er, das dauert etwa 40 Sekunden.</p>
+      <label class="${can.why ? "dis" : ""}"><input type="radio" name="ok" value="vorbei" ${can.why ? "disabled" : "checked"}> <b>Vorbeifahrt am Halt zeigenden Signal ${sigName}</b>
+        <small>${can.why ? can.why : can.raeum !== undefined ? "Mit Räumungsprüfung: Der Zug fährt auf Sicht durch den grundgestellten Abschnitt und meldet ihn danach frei." : "Wenn das Signal gestört ist oder keine Fahrt zeigen kann, die Weichen aber richtig liegen. Fahrt auf Sicht bis zum nächsten Hauptsignal."}</small></label>
+      <label><input type="radio" name="ok" value="sicht" ${can.why ? "checked" : ""}> <b>Fahrt auf Sicht bis zum nächsten Hauptsignal</b>
+        <small>Zum Beispiel bei Meldungen über Personen oder Tiere im Gleis. Höchstens <select id="odv">${[20, 30, 40, 60].map((v) => `<option ${v === 40 ? "selected" : ""}>${v}</option>`).join("")}</select> km/h, Grund <select id="odr">${["Personen im Gleis gemeldet", "Tiere im Gleis gemeldet", "Gegenstand im Gleis gemeldet", "unklare Betriebslage"].map((x) => `<option>${x}</option>`).join("")}</select></small></label>
+      <div class="odb"><button id="odGo">Befehl diktieren</button><button id="odX" class="ghost">Abbrechen</button></div></div>`;
+    dlg.classList.remove("hidden");
+    $("odX").onclick = () => dlg.classList.add("hidden");
+    $("odGo").onclick = () => {
+      const kind = (dlg.querySelector<HTMLInputElement>('input[name="ok"]:checked')?.value) ?? "sicht";
+      const why = w.issueOrder(t.id, kind, Number(($("odv") as HTMLSelectElement).value), ($("odr") as HTMLSelectElement).value);
+      toast(why ?? `Befehl an ${t.no} wird diktiert`);
+      if (!why) dlg.classList.add("hidden");
+    };
+  };
   const ctxMenu = new ContextMenu();
   cv.addEventListener("contextmenu", (e) => {
     e.preventDefault();
@@ -254,6 +278,8 @@ async function boot() {
       items.push({ label: "Fahrstraße zurücknehmen", disabled: !sg.route, act: () => { const why = w.cancelRoute(sg.id); if (why) toast(why); else w.log(`Fahrstraße ab ${sg.name} zurückgenommen`); } });
       items.push({ label: sg.auto ? "Zuglenkung ausschalten" : "Zuglenkung einschalten", act: () => { sg.auto = !sg.auto; w.log(`Zuglenkung für ${sg.name} ${sg.auto ? "eingeschaltet" : "ausgeschaltet"}`); } });
       items.push({ label: "Ersatzsignal (Zs 1) geben", act: () => { const why = w.giveZs1(sg.id); if (why) toast(why); } });
+      const waiting = w.trains.find((t) => t.nextSig === sg.id && t.distNextSig < 400);
+      if (waiting) items.push({ label: `Schriftlicher Befehl an ${waiting.no} …`, act: () => openOrder(waiting) });
       items.push({ label: blocked ? "Signalsperre aufheben" : "Signal sperren", act: () => { blocked ? w.il.blockedSignals.delete(sg.id) : w.il.blockedSignals.add(sg.id); w.log(`${sg.name} ${blocked ? "entsperrt" : "gesperrt"}`); } });
     } else if (h.kind === "switch") {
       const n = g.nodes[h.node];
@@ -268,6 +294,7 @@ async function boot() {
       items.push({ label: "Funk …", act: () => { tw.tab = "funk"; showTrain(t); } });
       items.push({ label: t.hold ? "Halt aufheben (Funk)" : "Halt anordnen (Funk)", act: () => radio(w, t, t.hold ? "Weiterfahrt erlaubt" : "Sofort anhalten", t.hold ? "weiter" : "halt") });
       items.push({ label: "Anschluss abwarten", sub: [2, 3, 5, 8, 10].map((m) => ({ label: `${m} Minuten`, act: () => radio(w, t, `Warten Sie ${m} min auf den Anschluss`, "anschluss") })) });
+      items.push({ label: "Schriftlichen Befehl erteilen …", act: () => openOrder(t) });
       items.push({ label: "Verspätungsursache …", act: () => { tw.tab = "versp"; showTrain(t); } });
       const noShunt = w.canShunt(t);
       const targets = noShunt ? [] : w.shuntTargets(t);
@@ -281,6 +308,7 @@ async function boot() {
       const setSlow = (v: number) => {
         E.slow = v || undefined;
         w.log(v ? `Langsamfahrstelle ${v} km/h ${title} eingerichtet` : `Langsamfahrstelle ${title} aufgehoben`, v ? "warn" : "info");
+        w.note("La", v ? `Langsamfahrstelle ${v} km/h ${title} eingerichtet` : `Langsamfahrstelle ${title} aufgehoben`);
       };
       items.push({ label: `Langsamfahrstelle${E.slow ? ` (jetzt ${E.slow})` : ""}`, sub: [
         ...[10, 20, 30, 40, 50, 60, 80, 100].map((v) => ({ label: `${v} km/h`, act: () => setSlow(v) })),
@@ -290,7 +318,16 @@ async function boot() {
         if (!E.closed && (E.lock || E.occ)) return toast("Abschnitt ist belegt oder in einer Fahrstraße, erst räumen");
         E.closed = !E.closed;
         w.log(`${title} ${E.closed ? "gesperrt" : "wieder frei"}`, E.closed ? "warn" : "info");
+        w.note("Sperrung", `${title} ${E.closed ? "gesperrt" : "Sperrung aufgehoben"}`);
       } });
+      const sec = E.az ? w.azSections.find((x) => x.edges.includes(h.edge)) : undefined;
+      if (sec) {
+        const last = w.azLastTrain(sec.id);
+        items.push({ label: sec.state === 1 ? "Achszähler gestört: Ablauf" : "Grundgestellt: Räumungsprüfung ausstehend", disabled: true });
+        items.push({ label: `1. Zugschlussmeldung${last ? ` von ${last.no}` : ""} anfordern`, disabled: sec.state !== 1 || !!sec.zugschluss, act: () => { const why = w.azAskZugschluss(sec.id); toast(why ?? "Zugschlussmeldung angefordert, Antwort kommt per Funk"); } });
+        items.push({ label: `2. Grundstellung ausführen${sec.zugschluss ? "" : " (ohne Nachweis)"}`, disabled: sec.state !== 1, act: () => { const why = w.azReset(sec.id); if (why) toast(why); } });
+        items.push({ label: "3. Nächsten Zug mit Befehl durchfahren lassen (Rechtsklick auf den Zug)", disabled: true });
+      }
       items.push({ label: `Länge ${E.len} m · zulässig ${E.vmax} km/h`, disabled: true });
     } else return;
     ctxMenu.show(e.clientX, e.clientY, title, items);
@@ -465,12 +502,22 @@ async function boot() {
     }
     if (fs.length) html += `<h3>Störungen und Ereignisse</h3>`;
     else html += `<p>Keine Störungen. ${w.faultRate ? "Es kann jederzeit etwas passieren." : "Störungen sind ausgeschaltet."}</p>`;
-    html += fs.map((f) => {
+    html += fs.filter((f) => f.kind !== "az").map((f) => {
       const left = Math.max(0, Math.round((f.until - w.time) / 60));
       const waiting = f.kind === "signal" ? w.trains.find((t) => t.nextSig === f.target && t.distNextSig < 400) : undefined;
       const btn = waiting ? `<button data-zs1="${f.target}">Ersatzsignal für ${waiting.no}</button>` : "";
       return `<div class="fault"><div>${f.text}</div><small>noch ca. ${left} min</small>${btn}</div>`;
     }).join("");
+    for (const sec of w.azSections) {
+      const last = w.azLastTrain(sec.id);
+      const waitT = w.trains.find((t) => t.nextSig && t.distNextSig < 400 && t.v < 0.5 && (w.il.paths.get(t.nextSig) ?? []).some((p) => p.edges.some((e) => sec.edges.includes(e))));
+      html += `<div class="fault az"><div><b>Gleisfreimeldung gestört</b> ${sec.name}</div>
+        <ol class="steps">
+          <li class="${sec.zugschluss || sec.state === 2 ? "done" : ""}">Zugschluss prüfen: ${last ? `Letzter Zug war ${last.no}.` : "Seit Spielbeginn fuhr hier kein Zug."} ${sec.zugschluss ? `Bestätigt von ${sec.zugschluss}.` : last && sec.state === 1 ? `<button data-azz="${sec.id}">Zugschluss von ${last.no} anfordern</button>` : ""}</li>
+          <li class="${sec.state === 2 ? "done" : ""}">Grundstellung (Zählwerk) ${sec.state === 1 ? `<button data-azr="${sec.id}">Grundstellung ausführen</button>` : "erfolgt."}</li>
+          <li>Räumungsprüfung: nächsten Zug mit schriftlichem Befehl auf Sicht durchfahren lassen. ${sec.state === 2 && waitT ? `<button data-azo="${waitT.id}">Befehl an ${waitT.no}</button>` : sec.entered ? `${sec.entered} fährt gerade durch.` : ""}</li>
+        </ol></div>`;
+    }
     const sites = w.ext.sites.filter((x) => x.until > w.time);
     if (sites.length) html += `<h3>Baustellen in dieser Schicht</h3>` + sites.map((x) => `<div class="site ${x.active ? "on" : ""}"><div>${x.text}</div><small>${x.active ? "aktiv" : "geplant"} ${hm(x.from)}–${hm(x.until)} Uhr</small></div>`).join("");
     if (feats.weather) html += `<h3>Wetter</h3><p>${WX[w.ext.wx].icon} <b>${WX[w.ext.wx].label}</b>. ${WX[w.ext.wx].text}</p>`;
@@ -478,9 +525,13 @@ async function boot() {
       const shut = w.ext.crossings.filter((c) => c.closed).length;
       html += `<h3>Bahnübergänge</h3><p>${w.ext.crossings.length} Bahnübergänge, davon ${shut} gerade geschlossen.${w.ext.crossings.some((c) => c.faultUntil) ? " Gestörte BÜ werden von den Zügen nur mit Schrittgeschwindigkeit befahren." : ""}</p>`;
     }
+    if (w.book.length) html += `<h3>Arbeitsbuch</h3><div class="book">${w.book.slice(-12).reverse().map((b) => `<div><time>${hm(b.t)}</time><b>${b.kind}</b> ${b.text}</div>`).join("")}</div>`;
     if (el.dataset.h === html) return;
     el.dataset.h = html;
     el.innerHTML = html;
+    el.querySelectorAll<HTMLButtonElement>("[data-azz]").forEach((b) => (b.onclick = () => { const why = w.azAskZugschluss(Number(b.dataset.azz)); toast(why ?? "Zugschlussmeldung angefordert"); }));
+    el.querySelectorAll<HTMLButtonElement>("[data-azr]").forEach((b) => (b.onclick = () => { const why = w.azReset(Number(b.dataset.azr)); if (why) toast(why); }));
+    el.querySelectorAll<HTMLButtonElement>("[data-azo]").forEach((b) => (b.onclick = () => { const t = w.trains.find((x) => x.id === Number(b.dataset.azo)); if (t) openOrder(t); }));
     el.querySelectorAll<HTMLButtonElement>("[data-hold]").forEach((b) => (b.onclick = () => {
       const why = w.holdConnection(Number(b.dataset.hold));
       toast(why ?? "Anschluss wird gehalten");
@@ -544,6 +595,7 @@ async function boot() {
       <h3>Verspätungsursachen (abgeschlossene Fahrten, Minuten)</h3>
       ${causes.length ? `<table>${[...merged].map(([k, m]) => `<tr><td>${k}</td><td style="width:45%"><div class="bar" style="width:${(100 * m) / max}%"></div></td><td style="text-align:right">${m.toFixed(1).replace(".", ",")}</td></tr>`).join("")}</table>` : "<p>Keine erfassten Verspätungen.</p>"}
       ${sc.late.length ? `<h3>Verspätete Züge (ab 6 min)</h3><table>${sc.late.slice(-15).reverse().map((l) => `<tr><td>${l.no}</td><td>+${l.min} min</td><td>${l.cause}</td></tr>`).join("")}</table>` : ""}
+      ${w.book.length ? `<h3>Arbeitsbuch (Ersatzhandlungen)</h3><table>${w.book.slice(-25).map((b) => `<tr><td>${hm(b.t)}</td><td>${b.kind}</td><td>${b.text}</td></tr>`).join("")}</table>` : ""}
       <button id="repClose">Weiter stellen</button> <button id="repNew" style="background:#3a4656">Neue Schicht</button>
     </div>`;
     $("report").classList.remove("hidden");

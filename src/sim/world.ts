@@ -46,6 +46,8 @@ export interface Train {
   fault?: string; // aktuelle Störung am Zug
   faultUntil: number;
   sight: boolean; // Fahrt auf Sicht nach Ersatzsignal
+  orderV?: number; // Höchstgeschwindigkeit laut Befehl (km/h), gilt bis zum nächsten Hauptsignal
+  raeum?: number; // Räumungsprüfung für diesen Achszählabschnitt
   hold: boolean; // Halt auf Anordnung des Fahrdienstleiters (Funk)
   causes: Record<string, number>; // erfasste Wartezeiten nach Ursache (Sekunden)
   reason?: string; // vom Fahrdienstleiter eingetragene Verspätungsursache
@@ -69,7 +71,7 @@ export interface ShuntTarget {
 
 export interface Fault {
   id: number;
-  kind: "switch" | "signal" | "door" | "vehicle" | "bue" | "event";
+  kind: "switch" | "signal" | "door" | "vehicle" | "bue" | "event" | "az";
   target: number; // Knoten-, Signal- oder Zug-ID
   until: number;
   text: string;
@@ -224,6 +226,7 @@ export class World {
       this.faultTimer = 0;
       this.faultsTick();
     }
+    if (this.orders.length || this.pendingRadio.length) this.ordersTick();
     this.zlTimer += dt;
     if (this.zlTimer >= 2) {
       this.zlTimer = 0;
@@ -371,7 +374,7 @@ export class World {
     const g = this.g;
     const head = this.headEdge(t);
     let vLimit = Math.min(t.vmax, ...t.body.map((e) => vEdge(g.edges[e]) / 3.6));
-    if (t.sight) vLimit = Math.min(vLimit, 40 / 3.6);
+    if (t.sight) vLimit = Math.min(vLimit, (t.orderV ?? 40) / 3.6);
     let sight = t.sight;
     let stopDist = Infinity;
     let platformStop = false;
@@ -543,7 +546,7 @@ export class World {
             this.il.zs1.delete(sid);
             t.sight = true;
           } else this.incident(`${t.no} hat ${sg.name} in Haltstellung überfahren!`);
-        } else t.sight = false;
+        } else { t.sight = false; t.orderV = undefined; }
         this.il.passed(sg, t.id);
       }
       t.headPos -= head.len;
@@ -557,10 +560,10 @@ export class World {
         let covered = t.headPos;
         for (let i = 1; i < t.body.length - 1; i++) covered += g.edges[t.body[i]].len;
         if (covered < t.len) break;
-        this.vacate(t.body.shift()!);
+        this.vacate(t.body.shift()!, t);
       } else {
         if (t.exiting && t.headPos - this.headEdge(t).len >= t.len) {
-          this.vacate(t.body.shift()!);
+          this.vacate(t.body.shift()!, t);
           this.finish(t, true);
         }
         break;
@@ -568,8 +571,10 @@ export class World {
     }
   }
 
-  private vacate(e: number) {
+  private vacate(e: number, t?: Train) {
     const E = this.g.edges[e];
+    if (t) this.lastOnEdge.set(e, { no: t.no, id: t.id, t: this.time });
+    if (t && E.az === 2) this.azLeft(e, t);
     E.occ--;
     if (E.occ <= 0) {
       E.occ = 0;
@@ -578,6 +583,7 @@ export class World {
   }
 
   private enteredEdge(t: Train, e: number) {
+    if (this.g.edges[e].az === 2) { const sec = this.azSections.find((x) => x.edges.includes(e)); if (sec) sec.entered = t.no; }
     const st = this.g.edges[e].platform?.st;
     if (!st) return;
     // Wird ein späterer Halt erreicht, sind vorherige Halte ausgefallen
@@ -1253,6 +1259,10 @@ export class World {
         this.il.faultySwitches.delete(f.target);
         this.log(`Weiche ${this.g.nodes[f.target].swName} (${this.nearStation(this.g.nodes[f.target].x)}) ist wieder in Ordnung`, "good");
       }
+      if (f.kind === "az") {
+        const sec = this.azSections.find((x) => x.id === f.target);
+        if (sec) this.azClear(sec, "Techniker hat den Achszähler zurückgesetzt");
+      }
       if (f.kind === "signal") {
         this.il.faultySignals.delete(f.target);
         this.log(`Signal ${this.il.sig(f.target).name} ist wieder in Ordnung`, "good");
@@ -1291,6 +1301,9 @@ export class World {
         this.addFault("vehicle", t.id, t.faultUntil, `${what} an ${t.no} bei ${this.nearStation(this.g.nodes[this.g.edges[t.body[t.body.length - 1]].a].x)}, ca. ${Math.round(dur / 60)} min`);
       }
     }
+    // Achszählerstörung: etwa alle 180 min
+    if (r() < k / 180) this.azFault();
+    this.azAuto();
   }
 
   // Ersatzsignal (Zs1) für einen Zug am Signal
@@ -1299,6 +1312,8 @@ export class World {
     if (this.il.proceeds(s, this.time)) return "Signal zeigt bereits Fahrt";
     const t = this.trains.find((t) => t.nextSig === sid && t.distNextSig < 400);
     if (!t) return "Kein Zug steht vor diesem Signal";
+    const azBlock = (this.il.paths.get(sid) ?? []).every((p) => p.edges.some((e) => this.g.edges[e].az));
+    if (!s.route && azBlock) return "Dahinter ist die Gleisfreimeldung gestört: Ersatzsignal reicht nicht, erst Grundstellung, dann schriftlichen Befehl erteilen";
     if (!s.route) {
       // Ohne Fahrstraße nur, wenn die Weichen einen Fahrweg bilden, der nicht in eine andere Fahrstraße führt
       const ok = (this.il.paths.get(sid) ?? []).some((p) =>
@@ -1308,7 +1323,217 @@ export class World {
     }
     this.il.zs1.set(sid, this.time + 90);
     this.log(`Ersatzsignal an ${s.name} für ${t.no}`, "info");
+    this.note("Zs 1", `Ersatzsignal am ${s.name} für ${t.no}${this.il.faultySignals.has(sid) ? " (Signalstörung)" : ""}`);
     return null;
+  }
+
+
+  // ---------------- Arbeitsbuch (Nachweis der Ersatzhandlungen) ----------------
+  book: { t: number; kind: string; text: string }[] = [];
+  note(kind: string, text: string) {
+    this.book.push({ t: this.time, kind, text });
+    if (this.book.length > 300) this.book.shift();
+  }
+
+  // ---------------- Gleisfreimeldung: Achszählerstörung, Grundstellung, Räumungsprüfung ----------------
+  lastOnEdge = new Map<number, { no: string; id: number; t: number }>();
+  azSections: { id: number; edges: number[]; state: number; from: number; name: string; zugschluss?: string; asked?: boolean; entered?: string }[] = [];
+  azId = 1;
+  azCount = 0; // Zählwerk der Grundstellungen
+  private azSectionOf(e0: number): number[] {
+    const g = this.g;
+    const out = [e0], seen = new Set([e0]);
+    const stopAt = (n: number) => { const N = g.nodes[n]; return N.swSide !== undefined || N.sigE || N.sigW || N.portal || N.buffer || N.east.length + N.west.length !== 2; };
+    for (const start of [g.edges[e0].a, g.edges[e0].b]) {
+      let n = start, cur = e0;
+      while (!stopAt(n) && out.length < 12) {
+        const nx = [...g.nodes[n].east, ...g.nodes[n].west].find((x) => x !== cur);
+        if (nx === undefined || seen.has(nx)) break;
+        seen.add(nx); out.push(nx); cur = nx;
+        n = g.edges[nx].a === n ? g.edges[nx].b : g.edges[nx].a;
+      }
+    }
+    return out;
+  }
+  azFault(e0?: number): string | null {
+    const g = this.g, r = this.rand;
+    if (e0 === undefined) {
+      const cand = g.edges.filter((E) => !E.platform && !E.occ && !E.lock && !E.overlap && !E.closed && !E.az && E.len > 150 && g.nodes[E.a].s !== undefined);
+      if (!cand.length) return "kein Abschnitt";
+      e0 = cand[Math.floor(r() * cand.length)].id;
+    }
+    const edges = this.azSectionOf(e0).filter((e) => !g.edges[e].occ && !g.edges[e].lock);
+    if (!edges.length) return "belegt";
+    const E = g.edges[edges[0]];
+    const name = E.platform ? `${g.stations[E.platform.st].name} Gleis ${E.platform.track}` : `bei ${this.nearStation(g.nodes[E.a].x)} (km ${(((g.nodes[E.a].s ?? 0) + (g.nodes[E.b].s ?? 0)) / 2000).toFixed(1).replace(".", ",")})`;
+    const sec = { id: this.azId++, edges, state: 1, from: this.time, name };
+    for (const e of edges) g.edges[e].az = 1;
+    this.azSections.push(sec);
+    this.addFault("az", sec.id, this.time + 90 * 60, `Achszählerstörung ${name}: Abschnitt zeigt besetzt, obwohl kein Zug gemeldet ist. Zugschluss prüfen, Grundstellung, dann Räumungsprüfung mit Befehl`);
+    return null;
+  }
+
+  // In Bereichen, die der Spieler nicht stellt, erledigt der Nachbar-Fdl den Ablauf selbst
+  private azOwnerManual(sec: { edges: number[] }) {
+    const x = this.g.nodes[this.g.edges[sec.edges[0]].a].x;
+    let best = "", bd = Infinity;
+    for (const [c, st] of Object.entries(this.g.stations)) if (Math.abs(st.x - x) < bd) { bd = Math.abs(st.x - x); best = c; }
+    return this.manualAreas.has(best);
+  }
+  private azAuto() {
+    for (const sec of [...this.azSections]) {
+      if (this.azOwnerManual(sec)) continue;
+      if (sec.state === 1 && this.time - sec.from > 300) {
+        sec.zugschluss = sec.zugschluss ?? "Nachbar-Fdl";
+        this.azReset(sec.id);
+      } else if (sec.state === 2) {
+        const t = this.trains.find((x) => x.v < 0.5 && x.nextSig && x.distNextSig < 400 && !this.orders.some((o) => o.train === x.id && o.state !== "gültig") && this.orderCheck(x, "vorbei").raeum === sec.id);
+        if (t) this.issueOrder(t.id, "vorbei");
+      }
+    }
+  }
+  // letzter Zug, der den Abschnitt verlassen hat
+  azLastTrain(id: number) {
+    const sec = this.azSections.find((x) => x.id === id);
+    if (!sec) return undefined;
+    let best: { no: string; id: number; t: number } | undefined;
+    for (const e of sec.edges) { const l = this.lastOnEdge.get(e); if (l && (!best || l.t > best.t)) best = l; }
+    return best;
+  }
+  pendingRadio: { at: number; train: number; text: string; then?: () => void }[] = [];
+  azAskZugschluss(id: number): string | null {
+    const sec = this.azSections.find((x) => x.id === id);
+    if (!sec) return "Störung ist schon behoben";
+    if (sec.state !== 1) return "Grundstellung ist schon erfolgt";
+    const last = this.azLastTrain(id);
+    if (!last) return "Seit Spielbeginn ist kein Zug durch diesen Abschnitt gefahren. Prüfe im Bildfahrplan, ob er frei sein muss, und stelle dann ohne Zugschlussmeldung grund (wird im Arbeitsbuch vermerkt)";
+    const t = this.trains.find((x) => x.id === last.id);
+    sec.asked = true;
+    if (t) {
+      t.radio.push({ t: this.time, from: "fdl", text: `${t.no}, bitte melden Sie mir Zugschluss: Ist Ihr Zug vollständig, Schlusssignal vorhanden?` });
+      this.pendingRadio.push({ at: this.time + 25, train: t.id, text: `${t.no}: Zug ist vollständig, Schlusssignal ist vorhanden. Zugschluss ${sec.name} um ${String(Math.floor((last.t % 86400) / 3600)).padStart(2, "0")}:${String(Math.floor(last.t / 60) % 60).padStart(2, "0")}.`, then: () => { sec.zugschluss = last.no; this.note("Zugschluss", `Zugschlussmeldung ${last.no} für Abschnitt ${sec.name} erhalten`); } });
+    } else {
+      sec.zugschluss = last.no;
+      this.note("Zugschluss", `Zugschluss ${last.no} (Abschnitt ${sec.name}) vom Nachbar-Fdl bestätigt, Zug hat den Bereich verlassen`);
+      this.log(`Nachbar-Fdl bestätigt: ${last.no} ist vollständig angekommen`, "good");
+    }
+    return null;
+  }
+  azReset(id: number): string | null {
+    const sec = this.azSections.find((x) => x.id === id);
+    if (!sec) return "Störung ist schon behoben";
+    if (sec.state !== 1) return "Grundstellung ist schon erfolgt";
+    if (sec.edges.some((e) => this.g.edges[e].occ)) return "Im Abschnitt steht ein Zug, keine Grundstellung möglich";
+    this.azCount++;
+    sec.state = 2;
+    for (const e of sec.edges) this.g.edges[e].az = 2;
+    const proof = sec.zugschluss ? `Zugschlussmeldung ${sec.zugschluss}` : "ohne Zugschlussmeldung";
+    if (!sec.zugschluss) { this.score.points -= 25; this.log("Grundstellung ohne Nachweis, dass der Abschnitt frei ist: −25 Punkte", "bad"); }
+    this.note("AzGrT", `Achszähler-Grundstellung Nr. ${this.azCount}, Abschnitt ${sec.name} (${proof}). Räumungsprüfung durch den nächsten Zug nötig`);
+    this.log(`Grundstellung ${sec.name} ausgeführt. Der nächste Zug fährt mit Befehl auf Sicht durch (Räumungsprüfung)`, "info");
+    return null;
+  }
+  private azLeft(e: number, t: Train) {
+    const sec = this.azSections.find((x) => x.edges.includes(e));
+    if (!sec || sec.state !== 2) return;
+    // frei, sobald der Zug den ganzen Abschnitt verlassen hat
+    const still = sec.edges.some((x) => x !== e && this.g.edges[x].occ) || this.g.edges[e].occ > 1;
+    if (still || !t.body.every((x) => !sec.edges.includes(x) || x === e)) return;
+    if (t.body.some((x) => sec.edges.includes(x) && x !== e)) return;
+    this.pendingRadio.push({ at: this.time + 15, train: t.id, text: `${t.no}: Abschnitt ${sec.name} auf Sicht befahren, keine Hindernisse. Zugschluss vollständig.` });
+    this.azClear(sec, `Räumungsprüfung durch ${t.no} abgeschlossen`);
+  }
+  private azClear(sec: { id: number; edges: number[]; name: string }, why: string) {
+    for (const e of sec.edges) this.g.edges[e].az = undefined;
+    this.azSections = this.azSections.filter((x) => x !== sec);
+    this.faults = this.faults.filter((f) => !(f.kind === "az" && f.target === sec.id));
+    this.note("AzGrT", `${why}: Abschnitt ${sec.name} wieder frei gemeldet`);
+    this.log(`${why}: Abschnitt ${sec.name} wieder frei`, "good");
+  }
+
+  // ---------------- Schriftliche Befehle (per Funk diktiert) ----------------
+  orders: { id: number; no: number; train: number; kind: string; sig: number; v: number; text: string; state: string; at: number; raeum?: number }[] = [];
+  orderNo = 1;
+  orderCheck(t: Train, kind: string): { why: string | null; raeum?: number } {
+    if (kind === "vorbei") {
+      if (!t.nextSig || t.distNextSig > 400) return { why: "Der Zug steht nicht vor einem Signal" };
+      const s = this.il.sig(t.nextSig);
+      if (this.il.proceeds(s, this.time)) return { why: "Das Signal zeigt bereits Fahrt" };
+      if (this.orders.some((o) => o.train === t.id && o.state !== "gültig")) return { why: "Für den Zug wird gerade schon ein Befehl übermittelt" };
+      let raeum: number | undefined;
+      const ok = (this.il.paths.get(s.id) ?? []).some((p) => {
+        if (!p.sw.every(({ node, pos }) => this.g.nodes[node].swPos === pos)) return false;
+        for (const e of p.edges) {
+          const E = this.g.edges[e];
+          if (E.closed || (E.lock && this.il.routes.get(E.lock)?.path.sig !== s.id) || (E.occ && !t.body.includes(e)) || E.az === 1) return false;
+          if (E.az === 2) raeum = this.azSections.find((x) => x.edges.includes(e))?.id;
+        }
+        return true;
+      });
+      if (!ok) {
+        const az1 = (this.il.paths.get(s.id) ?? []).some((p) => p.edges.some((e) => this.g.edges[e].az === 1));
+        return { why: az1 ? "Dahinter ist die Gleisfreimeldung gestört: zuerst Zugschluss prüfen und Grundstellung ausführen" : "Kein gesicherter Fahrweg: Weichen passend stellen oder Fahrstraße einstellen, Abschnitt muss frei und nicht gesperrt sein" };
+      }
+      return { why: null, raeum };
+    }
+    if (kind === "sicht") return { why: null };
+    return { why: "Unbekannte Befehlsart" };
+  }
+  issueOrder(trainId: number, kind: string, v = 40, reason = ""): string | null {
+    const t = this.trains.find((x) => x.id === trainId);
+    if (!t) return "Zug nicht im Bereich";
+    const c = this.orderCheck(t, kind);
+    if (c.why) return c.why;
+    const no = this.orderNo++;
+    const sig = t.nextSig;
+    let text = "";
+    if (kind === "vorbei") {
+      const sec = c.raeum !== undefined ? this.azSections.find((x) => x.id === c.raeum) : undefined;
+      text = `Befehl Nr. ${no} für Zug ${t.no}: Sie dürfen am Halt zeigenden Signal ${this.il.sig(sig).name} vorbeifahren. ` +
+        (sec ? `Der Abschnitt ${sec.name} ist nach Grundstellung des Achszählers nicht frei gemeldet. Räumungsprüfung: Fahren Sie auf Sicht mit höchstens 40 km/h und melden Sie Besonderheiten.` : `Fahren Sie bis zum nächsten Hauptsignal auf Sicht, höchstens 40 km/h.`);
+    } else {
+      text = `Befehl Nr. ${no} für Zug ${t.no}: Fahren Sie ab sofort bis zum nächsten Hauptsignal auf Sicht, höchstens ${v} km/h.${reason ? ` Grund: ${reason}.` : ""}`;
+    }
+    this.orders.push({ id: no, no, train: t.id, kind, sig, v, text, state: "diktiert", at: this.time + 30, raeum: c.raeum });
+    t.radio.push({ t: this.time, from: "fdl", text: `Ich diktiere einen Befehl. ${text}` });
+    this.log(`Befehl Nr. ${no} an ${t.no} wird diktiert`, "info");
+    return null;
+  }
+  private ordersTick() {
+    for (const p of [...this.pendingRadio]) {
+      if (p.at > this.time) continue;
+      this.pendingRadio = this.pendingRadio.filter((x) => x !== p);
+      const t = this.trains.find((x) => x.id === p.train);
+      if (t) t.radio.push({ t: this.time, from: "tf", text: p.text });
+      this.log(p.text, "info");
+      p.then?.();
+    }
+    for (const o of this.orders) {
+      if (o.state === "gültig" || o.at > this.time) continue;
+      const t = this.trains.find((x) => x.id === o.train);
+      if (!t) { o.state = "gültig"; continue; }
+      if (o.state === "diktiert") {
+        t.radio.push({ t: this.time, from: "tf", text: `${t.driver}, ich wiederhole: ${o.text.replace(/^Befehl Nr\. \d+ für Zug \S+ \S+: /, `Befehl Nr. ${o.no}, `)}` });
+        o.state = "wiederholt";
+        o.at = this.time + 10;
+      } else if (o.state === "wiederholt") {
+        t.radio.push({ t: this.time, from: "fdl", text: `Richtig. Befehl Nr. ${o.no} gilt ab ${String(Math.floor((this.time % 86400) / 3600)).padStart(2, "0")}:${String(Math.floor(this.time / 60) % 60).padStart(2, "0")} Uhr.` });
+        o.state = "gültig";
+        if (o.kind === "vorbei") {
+          const c = this.orderCheck(t, "vorbei");
+          if (c.why && !/schon/.test(c.why)) { this.log(`Befehl Nr. ${o.no} kann nicht mehr ausgeführt werden: ${c.why}`, "warn"); continue; }
+          this.il.zs1.set(o.sig, this.time + 300);
+          t.raeum = o.raeum;
+          t.orderV = 40;
+        } else {
+          t.sight = true;
+          t.orderV = o.v;
+        }
+        this.note("Befehl", o.text);
+        this.log(`Befehl Nr. ${o.no} an ${t.no} gilt`, "good");
+      }
+    }
+    this.orders = this.orders.filter((o) => o.state !== "gültig" || this.time - o.at < 600);
   }
 
   // ---------------- Zugmeldungen ----------------

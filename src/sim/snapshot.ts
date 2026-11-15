@@ -22,6 +22,7 @@ export interface Snapshot {
   situation: SituationItem[];
   conns: { id: number; feeder: string; conn: string; st: string; dep: number; wait: number; text: string }[];
   tracks: Record<string, string[]>;
+  book: { t: number; kind: string; text: string }[];
 }
 
 export const CHANNEL = "stellwerk-sieg";
@@ -66,6 +67,7 @@ export function makeSnapshot(w: World, g: Graph): Snapshot {
       return { id: c.id, feeder: a ? `${a.no} (${a.trip.line})` : "?", conn: b ? `${b.no} (${b.trip.line} nach ${b.trip.to})` : "?", st: g.stations[c.st].name, dep: sb?.dep ?? 0, wait: c.wait,
         text: `Zubringer kommt ca. ${c.wait} min zu spät zum Umstieg` };
     }),
+    book: w.book.slice(-60),
     tracks: Object.fromEntries(Object.keys(g.stations).map((c) => [c, w.platformTracks(c).map((x) => x.track)])),
   };
 }

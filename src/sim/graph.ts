@@ -39,6 +39,7 @@ export interface GEdge {
   slow?: number; // Langsamfahrstelle (km/h)
   closed?: boolean; // Gleis gesperrt
   work?: boolean; // Baustelle
+  az?: number; // Gleisfreimeldung gestört: 1 = gestört, 2 = nach Grundstellung (Räumungsprüfung nötig)
 }
 
 // zulässige Geschwindigkeit einer Kante unter Berücksichtigung von Langsamfahrstellen

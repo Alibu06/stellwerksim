@@ -221,6 +221,7 @@ function render() {
   if (tab === "lage") renderLage();
   if (tab === "dispo") renderDispo();
   if (tab === "funk") renderFunk();
+  if (tab === "book") setHtml($("p-book"), snap.book.length ? `<p class="empty">Nachweis aller Ersatzhandlungen dieser Schicht (Befehle, Ersatzsignale, Grundstellungen, Zugschlussmeldungen, La und Sperrungen).</p>` + snap.book.slice().reverse().map((b) => `<div class="ev"><time>${hm(b.t)}</time><b>${esc(b.kind)}</b> ${esc(b.text)}</div>`).join("") : `<p class="empty">Noch keine Einträge. Hier landen Befehle, Ersatzsignale, Grundstellungen, Zugschlussmeldungen, La und Sperrungen.</p>`);
   if (tab === "log") setHtml($("p-log"), snap.events.slice().reverse().map((e) => `<div class="ev ${e.kind}"><time>${hm(e.t)}</time>${esc(e.text)}</div>`).join(""));
   drawGraph();
 }

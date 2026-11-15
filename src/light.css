@@ -88,3 +88,9 @@ html.light #sigtip .warn { color: #c59700; }
 html.light #sigtip .bad { color: #ff0412; }
 html.light .themePick button { background: #d7dfe9; }
 html.light .themePick button.on { background: #c5d6e3; color: #141414; border-color: #2a6a8a; }
+html.light #orderDlg { background: #ffffff88; }
+html.light #orderDlg .od { background: #e1e7ef; border: 1px solid #bec9d7; box-shadow: 0 20px 50px #ffffffaa; }
+html.light #orderDlg select { background: #e6ecf3; color: #141414; }
+html.light #orderDlg .odb button { background: #a7d5b9; border: 1px solid #24a55f; color: #141414; }
+html.light #orderDlg .odb button.ghost { background: #d7dfe9; }
+html.light #tab-faults .book div { border-bottom: 1px solid #d7dfe9; }
