@@ -1,3 +1,4 @@
+import type { Contact } from "./phone";
 import { GEdge } from "./graph";
 import { Train, World } from "./world";
 
@@ -65,6 +66,7 @@ export interface Site {
 export interface Happening {
   id: number; kind: "feuer" | "personen" | "notarzt" | "polizei" | "baum" | "pkw" | "ol" | "bahnsteig" | "sturm"; text: string; edges: number[]; until: number;
   prev: Map<number, { slow?: number; closed?: boolean }>; station?: string; sec?: [string, string];
+  work?: number; keep?: boolean; train?: number; // Dauer der Arbeit vor Ort (ab Eintreffen), Zug beim Einsatz am Bahnsteig
 }
 
 // Abschnitte zwischen benachbarten Bahnhöfen (für Ereignisse)
@@ -203,10 +205,12 @@ export class Extras {
       const c = this.crossings[Math.floor(this.rand() * this.crossings.length)];
       if (!c.faultUntil) {
         const dur = 900 + this.rand() * 1800;
-        c.faultUntil = w.time + dur;
+        const mine = w.mineS(c.s);
+        c.faultUntil = w.time + (mine ? 1e7 : dur);
         changed = true;
         const what = c.full ? "Vollschranke lässt sich nicht schließen" : ["Halbschranke klemmt", "Blinklicht ausgefallen", "Einschaltkontakt gestört"][Math.floor(this.rand() * 3)];
-        w.addFault("bue", c.id, c.faultUntil, `${c.name} gestört (${what}): Züge halten vor dem BÜ und fahren mit Schrittgeschwindigkeit darüber, ca. ${Math.round(dur / 60)} min`);
+        w.addFault("bue", c.id, c.faultUntil, `${c.name} gestört (${what}): Züge halten vor dem BÜ und fahren mit Schrittgeschwindigkeit darüber, ${mine ? "Störungstrupp rufen" : `ca. ${Math.round(dur / 60)} min`}`);
+        if (mine) w.phone.add("bue", `BÜ-Störung ${c.name}`, w.nearStation(w.g.nodes[w.g.edges[c.edges[0]].a].x), ["stoerung"], w.faults[w.faults.length - 1].id, true, { work: dur * 0.6 });
       }
     }
     if (changed) this.rebuildPoints();
@@ -273,30 +277,64 @@ export class Extras {
       if (!s.active && w.time >= s.from && w.time < s.until) {
         if (s.kind === "gleis" && s.edges.some((e) => g.edges[e].occ || g.edges[e].lock)) continue; // erst wenn frei
         s.active = true;
-        for (const e of s.edges) {
-          const E = g.edges[e];
-          s.prev.set(e, { slow: E.slow, closed: E.closed });
-          if (s.kind === "la") E.slow = Math.min(E.slow ?? 999, s.v!);
-          else E.closed = true;
-          E.work = true;
-        }
+        for (const e of s.edges) { const E = g.edges[e]; s.prev.set(e, { slow: E.slow, closed: E.closed }); E.work = true; }
+        this.layer("s" + s.id, s.edges, s.kind === "la" ? { slow: s.v } : { closed: true });
         w.log(`Baustelle beginnt: ${s.text}`, "warn");
       } else if (s.active && w.time >= s.until) {
         s.active = false;
-        this.restore(s.edges, s.prev);
+        this.restore(s.edges, s.prev, "s" + s.id);
         w.log(`Baustelle beendet: ${s.text.split(":")[0]}`, "good");
       }
     }
   }
 
-  private restore(edges: number[], prev: Map<number, { slow?: number; closed?: boolean }>) {
+  // Überlagerte Sperrungen/La auf derselben Kante: jede Ursache ist eine Schicht über dem Grundzustand.
+  // Endet eine, wird der Zustand aus Grundzustand + verbleibenden Schichten neu berechnet.
+  layers = new Map<number, { key: string; closed?: boolean; slow?: number }[]>();
+  base = new Map<number, { slow?: number; closed?: boolean }>();
+  layer(key: string, edges: number[], eff: { closed?: boolean; slow?: number }) {
     const g = this.w.g;
     for (const e of edges) {
-      const p = prev.get(e);
-      g.edges[e].slow = p?.slow;
-      g.edges[e].closed = p?.closed;
-      g.edges[e].work = undefined;
+      const E = g.edges[e];
+      let L = this.layers.get(e);
+      if (!L || !L.length) { L = []; this.layers.set(e, L); this.base.set(e, { slow: E.slow, closed: E.closed }); }
+      L.push({ key, ...eff });
+      this.recompute(e);
     }
+  }
+  unlayer(key: string, edges: number[]) {
+    const g = this.w.g;
+    for (const e of edges) {
+      const L = (this.layers.get(e) ?? []).filter((x) => x.key !== key);
+      if (!L.length) {
+        const b = this.base.get(e);
+        if (b) { g.edges[e].slow = b.slow; g.edges[e].closed = b.closed; }
+        this.layers.delete(e); this.base.delete(e);
+      } else { this.layers.set(e, L); this.recompute(e); }
+      if (key.startsWith("s") && !L.some((x) => x.key.startsWith("s"))) g.edges[e].work = undefined;
+    }
+  }
+  // Fdl ändert La/Sperrung selbst: liegt eine Ursache darüber, gilt die Änderung für den Grundzustand
+  manual(e: number, ch: { slow?: number; closed?: boolean }): boolean {
+    const E = this.w.g.edges[e];
+    if (!this.layers.get(e)?.length) { if ("slow" in ch) E.slow = ch.slow; if ("closed" in ch) E.closed = ch.closed; return true; }
+    const b = this.base.get(e)!;
+    if ("slow" in ch) b.slow = ch.slow; if ("closed" in ch) b.closed = ch.closed;
+    this.recompute(e);
+    return "closed" in ch ? E.closed === ch.closed : true;
+  }
+  private recompute(e: number) {
+    const E = this.w.g.edges[e], b = this.base.get(e) ?? {}, L = this.layers.get(e) ?? [];
+    E.closed = b.closed || L.some((x) => x.closed) || undefined;
+    let v = b.slow ?? 999;
+    for (const x of L) if (x.slow) v = Math.min(v, x.slow);
+    E.slow = v < 999 ? v : undefined;
+  }
+  private restore(edges: number[], prev: Map<number, { slow?: number; closed?: boolean }>, key: string) {
+    const g = this.w.g;
+    // alter Spielstand ohne Schichten: wie früher auf den gemerkten Zustand zurück
+    for (const e of edges) if (!this.layers.get(e)?.some((x) => x.key === key)) { const p = prev.get(e); if (p) { g.edges[e].slow = p.slow; g.edges[e].closed = p.closed; } }
+    this.unlayer(key, edges);
     prev.clear();
   }
 
@@ -355,7 +393,7 @@ export class Extras {
         const dur = 600 + r() * 1200;
         h.edges = this.sectionEdges(...sec);
         h.until = w.time + dur;
-        h.text = `Personen im Gleis zwischen ${nm(sec[0])} und ${nm(sec[1])}: Fahrt auf Sicht, höchstens 30 km/h, Bundespolizei verständigt`;
+        h.text = `Personen im Gleis zwischen ${nm(sec[0])} und ${nm(sec[1])}: Fahrt auf Sicht, höchstens 30 km/h`;
         this.close(h, false, 30);
         this.emergencyStop(h.edges, "Schnellbremsung (Personen im Gleis)", 60 + r() * 120);
         break;
@@ -364,7 +402,7 @@ export class Extras {
         const lane = r() < 0.5 ? 4 : 5;
         h.edges = this.sectionEdges(...sec).filter((e) => this.laneOf(e) === lane || this.laneOf(e) === 4.5);
         h.until = w.time + 1800 + r() * 2400;
-        h.text = `Baum im Gleis zwischen ${nm(sec[0])} und ${nm(sec[1])} (${lane === 4 ? "Gleis Richtung Siegburg" : "Gleis Richtung Betzdorf"}): Gleis gesperrt, Notfallmanager unterwegs`;
+        h.text = `Baum im Gleis zwischen ${nm(sec[0])} und ${nm(sec[1])} (${lane === 4 ? "Gleis Richtung Siegburg" : "Gleis Richtung Betzdorf"}): Gleis gesperrt`;
         this.close(h, true);
         this.emergencyStop(h.edges, "Schnellbremsung (Baum im Gleis)", 180 + r() * 300);
         break;
@@ -377,7 +415,7 @@ export class Extras {
         h.sec = [a, b];
         h.edges = this.sectionEdges(a, b);
         h.until = w.time + 3600 + r() * 5400;
-        h.text = `Oberleitungsstörung zwischen ${nm(a)} und ${nm(b)} (${["Fahrdraht gerissen", "Ast in der Oberleitung", "Isolator defekt, Kurzschluss", "Ausleger nach Sturm verbogen"][Math.floor(r() * 4)]}): Strecke ohne Strom, keine Fahrten, Störungstrupp unterwegs`;
+        h.text = `Oberleitungsstörung zwischen ${nm(a)} und ${nm(b)} (${["Fahrdraht gerissen", "Ast in der Oberleitung", "Isolator defekt, Kurzschluss", "Ausleger nach Sturm verbogen"][Math.floor(r() * 4)]}): Strecke ohne Strom, keine Fahrten`;
         this.close(h, true);
         break;
       }
@@ -386,7 +424,7 @@ export class Extras {
         h.edges = [...c.edges];
         h.until = w.time + 1200 + r() * 1500;
         c.blockedUntil = h.until;
-        h.text = `Pkw auf dem ${c.name} liegengeblieben: Gleise am BÜ gesperrt, Abschleppdienst unterwegs`;
+        h.text = `Pkw auf dem ${c.name} liegengeblieben: Gleise am BÜ gesperrt`;
         this.close(h, true);
         this.emergencyStop(h.edges, "Nothalt (Hindernis am Bahnübergang)", 120);
         break;
@@ -403,25 +441,39 @@ export class Extras {
         w.cause(t, t.fault, dur);
         h.until = t.dwellUntil;
         h.station = st;
-        h.text = kind === "notarzt" ? `Notarzteinsatz in ${t.no} in ${nm(st)}: Zug steht ca. ${Math.round(dur / 60)} min` : `Polizeieinsatz in ${t.no} in ${nm(st)} (${["Fahrgast ohne Fahrschein randaliert", "Streit unter Fahrgästen", "verdächtiges Gepäckstück"][Math.floor(r() * 3)]}): Zug steht ca. ${Math.round(dur / 60)} min`;
+        h.train = t.id;
+        h.work = dur;
+        h.text = kind === "notarzt" ? `Notarzteinsatz in ${t.no} in ${nm(st)}: Zug steht${w.manualSt(st) ? ", bis der Einsatz beendet ist" : ` ca. ${Math.round(dur / 60)} min`}` : `Polizeieinsatz in ${t.no} in ${nm(st)} (${["Fahrgast ohne Fahrschein randaliert", "Streit unter Fahrgästen", "verdächtiges Gepäckstück"][Math.floor(r() * 3)]}): Zug steht${w.manualSt(st) ? ", bis der Einsatz beendet ist" : ` ca. ${Math.round(dur / 60)} min`}`;
         break;
       }
     }
     if (!h.until) return "nicht möglich";
+    // Im Bereich des Spielers: erst wenn er die richtigen Stellen anruft, geht es weiter
+    const need: Record<string, Contact[]> = { personen: ["polizei"], baum: ["notfall"], feuer: ["feuerwehr", "zes"], pkw: ["polizei"], ol: ["zes"], notarzt: ["rettung"], polizei: ["polizei"] };
+    const bueC = kind === "pkw" ? this.crossings.find((c) => c.edges[0] === h.edges[0]) : undefined;
+    const mine = bueC ? w.mineS(bueC.s) : h.station ? w.manualSt(h.station) : h.sec ? w.manualSt(h.sec[0]) || w.manualSt(h.sec[1]) : false;
+    h.work ??= h.until - w.time;
+    if (need[kind] && mine) {
+      h.until = w.time + 1e7;
+      const t = h.train !== undefined ? w.trains.find((x) => x.id === h.train) : undefined;
+      if (t) { t.dwellUntil = h.until; t.faultUntil = h.until; }
+      if (bueC) bueC.blockedUntil = h.until;
+    }
     this.happenings.push(h);
     w.addFault("event", h.id, h.until, h.text);
+    if (need[kind] && mine) {
+      const where = h.station ? w.g.stations[h.station].name : `${nm(h.sec![0])} – ${nm(h.sec![1])}`;
+      const title = { personen: "Personen im Gleis", baum: "Baum im Gleis", feuer: "Brand an der Strecke", pkw: "Pkw auf dem Bahnübergang", ol: "Oberleitungsstörung", notarzt: "Notfall im Zug", polizei: "Polizeieinsatz im Zug" }[kind as string]!;
+      w.phone.add(kind as any, title, where, need[kind], h.id, true, { train: h.train });
+    }
     return null;
   }
 
   private close(h: Happening, closed: boolean, slow?: number) {
     const w = this.w, g = w.g;
     const set = new Set(h.edges);
-    for (const e of h.edges) {
-      const E = g.edges[e];
-      h.prev.set(e, { slow: E.slow, closed: E.closed });
-      if (closed) E.closed = true;
-      if (slow) E.slow = Math.min(E.slow ?? 999, slow);
-    }
+    for (const e of h.edges) { const E = g.edges[e]; h.prev.set(e, { slow: E.slow, closed: E.closed }); }
+    this.layer("h" + h.id, h.edges, { closed: closed || undefined, slow });
     if (closed) {
       // noch nicht befahrene Fahrstraßen in den gesperrten Bereich zurücknehmen
       for (const r of [...w.il.routes.values()]) if (!r.used && r.path.edges.some((e) => set.has(e))) w.cancelRoute(r.path.sig);
@@ -442,11 +494,11 @@ export class Extras {
   private happeningsStep() {
     const w = this.w;
     for (const h of this.happenings) {
-      if (h.until > w.time) continue;
-      this.restore(h.edges, h.prev);
+      if (h.until > w.time || h.keep) { if (h.keep && h.until <= w.time) h.until = w.time + 1e7; continue; }
+      this.restore(h.edges, h.prev, "h" + h.id);
       w.log(`Ereignis beendet: ${h.text.split(":")[0]}. ${h.edges.length ? "Strecke wieder frei." : ""}`, "good");
     }
-    this.happenings = this.happenings.filter((h) => h.until > w.time);
+    this.happenings = this.happenings.filter((h) => h.until > w.time || h.keep);
   }
 
   // ---------- Anschlüsse ----------
@@ -584,7 +636,7 @@ export class Extras {
       if (h.until <= now) continue;
       const blocks = h.edges.some((e) => g.edges[e].closed);
       out.push({ id: `h${h.id}`, kind: "ereignis", icon: { feuer: "🔥", personen: "🚶", notarzt: "🚑", polizei: "🚓", baum: "🌳", pkw: "🚗", ol: "⚡", bahnsteig: "🚓", sturm: "🌬" }[h.kind], title: h.text.split(":")[0],
-        where: h.station ? g.stations[h.station].name : loc(h.edges), until: h.until,
+        where: h.station ? g.stations[h.station].name : loc(h.edges), until: h.until - now > 86400 ? undefined : h.until,
         effect: h.kind === "bahnsteig" ? "Bahnsteiggleis von der Bundespolizei gesperrt. Züge auf andere Gleise legen (Gleisänderung im Zugfenster oder in der Dispo)." : h.kind === "sturm" ? "Vorsorgliche Langsamfahrstelle wegen Sturmwarnung. Fallen trotzdem Bäume, können die Züge rechtzeitig anhalten." : h.kind === "ol" ? "Beide Gleise ohne Strom: keine Zugfahrten. Züge vor der Störung wenden lassen (Netzleitstelle schlägt Ersatzverkehr vor). Die SEV-Busse siehst du gelb unter dem Gleisbild. Du entscheidest, ob ein Zug am Wendebahnhof auf den Bus wartet." : h.station ? "Der Zug bleibt so lange am Bahnsteig stehen. Das Gleis ist blockiert, Folgezüge auf andere Gleise legen."
           : blocks ? "Abschnitt gesperrt: keine Fahrstraßen hinein. Züge davor warten oder werden über das andere Gleis (Gegengleis) geführt." : "Fahrt auf Sicht mit höchstens 30 km/h durch den Abschnitt.",
         trains: h.station ? w.trains.filter((t) => t.fault && t.dwelling && t.stops[t.stopIdx]?.st === h.station).map((t) => t.no) : affected(h.edges) });

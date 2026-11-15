@@ -1,3 +1,4 @@
+import { CONTACTS } from "./sim/phone";
 import { CHANNEL, Snapshot, SnapStop, SnapTrain } from "./sim/snapshot";
 import { applyThemeClass, tc } from "./ui/theme";
 
@@ -173,6 +174,7 @@ document.addEventListener("click", (e) => {
   switch (a) {
     case "accept": cmd("accept", { id }, "Zugmeldung angenommen"); break;
     case "call": cmd("call", { id, k: b.dataset.ck }, "Gespräch beendet"); break;
+    case "phone": cmd("phone", { id, c: b.dataset.c, ch: b.dataset.ch }, "Angerufen"); break;
     case "refuse": cmd("refuse", { id, why: ui[`rf${id}`] ?? REFUSE[0] }, "Zugmeldung abgelehnt, Nachbar bietet in 3 min erneut an"); break;
     case "hold": cmd("hold", { id }, "Anschluss wird gehalten"); break;
     case "drop": cmd("drop", { id }, "Anschluss aufgegeben"); break;
@@ -216,7 +218,7 @@ function render() {
     const live = key !== undefined ? snap.trains.find((t) => t.live && t.key === key) : undefined;
     selId = live ? live.id : null;
   }
-  const nOpen = snap.reports.filter((r) => r.kind === "in" && r.state === "offered").length + snap.conns.length + snap.calls.filter((c) => !c.answered).length;
+  const nOpen = snap.reports.filter((r) => r.kind === "in" && r.state === "offered").length + snap.conns.length + snap.calls.filter((c) => !c.answered).length + snap.matters.length;
   $("nDispo").textContent = nOpen ? String(nOpen) : "";
   $("nLage").textContent = snap.situation.length ? String(snap.situation.filter((x) => !x.planned).length || "") : "";
   renderBoard();
@@ -331,6 +333,13 @@ function renderDispo() {
   let html = "";
   const open = s.reports.filter((r) => r.kind === "in" && r.state === "offered");
   const calls = s.calls.filter((c) => !c.answered);
+  if (s.matters.length || s.phoneLog.length) {
+    html += `<h3>📞 Selbst anrufen</h3>` + s.matters.map((m) => `<div class="rep call"><div><b>${esc(m.title)}</b> <small>${hm(m.t)} · ${esc(m.where)} · Notfallmanager übernimmt in ${Math.max(0, Math.ceil((m.t + 1200 - s.time) / 60))} min</small></div>
+      <div class="ra">${CONTACTS.map((c) => m.choice && m.choice.contact === c.k && !m.called.includes(c.k)
+        ? m.choice.opts.map((o) => `<button data-a="phone" data-id="${m.id}" data-c="${c.k}" data-ch="${o.k}">${c.icon} ${esc(c.label)}: ${esc(o.label)}</button>`).join("")
+        : `<button data-a="phone" data-id="${m.id}" data-c="${c.k}" ${m.called.includes(c.k) ? "disabled" : ""}>${c.icon} ${esc(c.label)}</button>`).join("")}</div></div>`).join("")
+      + s.phoneLog.slice().reverse().map((l) => `<div class="rep small"><small>${hm(l.t)}</small> <b>${esc(l.who)}</b>: ${esc(l.text)}</div>`).join("");
+  }
   if (calls.length) html += `<h3>Telefon</h3>` + calls.map((c) => `<div class="rep call"><div><b>☎ ${esc(c.from)}</b> <small>${hm(c.t)} · noch ${Math.max(0, Math.ceil((c.expires - s.time) / 60))} min</small><br>${esc(c.text)}</div>
       <div class="ra">${c.opts.map((o, i) => `<button class="${i ? "" : "go"}" data-a="call" data-id="${c.id}" data-ck="${o.k}">${esc(o.label)}</button>`).join("")}</div></div>`).join("");
   html += `<h3>Zugmeldungen</h3>`;

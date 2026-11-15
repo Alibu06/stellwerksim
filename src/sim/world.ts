@@ -1,6 +1,7 @@
 import { Extras } from "./extras";
 import { Ops } from "./ops";
 import { Life } from "./life";
+import { Phone } from "./phone";
 import { Dir, GEdge, Graph, nextEdge, otherEnd, trailingOk, vEdge } from "./graph";
 import { Interlocking, PathDef } from "./interlocking";
 import { Cat, TripSpec, TTStop, rng } from "./timetable";
@@ -58,7 +59,7 @@ export interface Train {
   reasonNote?: string;
   extraDwell: number; // Anschluss abwarten (Sekunden, beim nächsten Halt)
   holdFor?: { st: string; sec: number };
-  medStop?: { st: string; sec: number }; // Rettungsdienst erwartet den Zug an diesem Halt
+  medStop?: { st: string; sec: number; rtwAt?: number }; // Rettungsdienst erwartet den Zug an diesem Halt
   waitFor?: { st: string; train: number; since?: number; no?: string }; // Überholung abwarten
   shunt?: { edges: number[]; label: string; rev?: ShuntTarget["rev"] }; // laufende Rangierfahrt
   shunted?: boolean; // Anschluss abwarten an bestimmtem Bahnhof (Disposition)
@@ -155,6 +156,7 @@ export class World {
   ext: Extras;
   ops: Ops;
   life: Life;
+  phone: Phone;
   connAlerts: { id: number; feeder: number; conn: number; st: string; t: number; wait: number }[] = [];
 
   constructor(public g: Graph, trips: TripSpec[], startTime: number) {
@@ -164,6 +166,7 @@ export class World {
     this.ext = new Extras(this);
     this.ops = new Ops(this);
     this.life = new Life(this);
+    this.phone = new Phone(this);
     // Züge, deren Fahrt bei Spielbeginn schon vorbei ist, entfallen; Wendezüge werden vom Vorgänger übernommen
     this.pending = trips.filter((t) => !t.turnedFrom && t.entryTime + t.initialDelay >= startTime - 60);
     this.buildUmlauf(trips);
@@ -240,6 +243,7 @@ export class World {
     this.ext.step(dt);
     this.ops.step(dt);
     this.life.step(dt);
+    this.phone.step();
     this.spawn();
     for (const t of this.trains) this.drive(t, dt);
     this.trains = this.trains.filter((t) => !t.gone);
@@ -692,11 +696,17 @@ export class World {
       t.holdFor = undefined;
     }
     if (t.medStop && t.medStop.st === s.st && !startHere) {
-      t.dwellUntil = Math.max(t.dwellUntil, this.time + t.medStop.sec);
-      t.fault = "Rettungsdienst im Zug"; t.faultUntil = t.dwellUntil;
-      this.cause(t, "Rettungsdiensteinsatz", t.medStop.sec);
-      this.log(`${t.no}: Rettungsdienst übernimmt in ${this.g.stations[s.st].name} den Fahrgast, Zug steht ca. ${Math.round(t.medStop.sec / 60)} min`, "info");
-      t.medStop = undefined;
+      if (t.medStop.rtwAt === undefined) {
+        // Rettungsdienst noch nicht gerufen: Zug wartet am Bahnsteig
+        t.dwellUntil = this.time + 1e7; t.fault = "Wartet auf den Rettungsdienst"; t.faultUntil = t.dwellUntil;
+        this.log(`${t.no} steht in ${this.g.stations[s.st].name} und wartet auf den Rettungsdienst`, "warn");
+      } else {
+        t.dwellUntil = Math.max(t.dwellUntil, Math.max(this.time, t.medStop.rtwAt) + t.medStop.sec);
+        t.fault = "Rettungsdienst im Zug"; t.faultUntil = t.dwellUntil;
+        this.cause(t, "Rettungsdiensteinsatz", t.dwellUntil - this.time);
+        this.log(`${t.no}: Rettungsdienst übernimmt in ${this.g.stations[s.st].name} den Fahrgast, Zug steht ca. ${Math.round((t.dwellUntil - this.time) / 60)} min`, "info");
+        t.medStop = undefined;
+      }
     }
     if (t.extraDwell > 0 && !startHere) {
       t.dwellUntil = Math.max(t.dwellUntil, s.dep + t.extraDwell);
@@ -1034,15 +1044,26 @@ export class World {
   private jamCool = 0;
   private jamResolver() {
     if (this.time < this.jamCool) return;
-    const cand = this.trains.filter((t) => !t.gone && t.body.length && t.waitRed > 2400 && t.nextSig && this.il.sig(t.nextSig).auto
-      && !t.fault && !t.rescue && !t.towed && !t.shunt && !this.rescues.some((R) => R.broken === t.id));
+    const ok = (t: Train) => !t.gone && t.body.length && t.nextSig && !t.fault && !t.rescue && !t.towed && !t.shunt && !this.rescues.some((R) => R.broken === t.id);
+    const near = (t: Train) => { const hs = this.headS(t); let st = "TR", bd = Infinity; for (const c of ["TR", "SB", "HN", "BL", "EI", "AU", "WI", "BZ"]) { const d = Math.abs(this.stS(c) - hs); if (d < bd) { bd = d; st = c; } } return st; };
+    // Im Bereich des Spielers: nach einer Stunde Stillstand fragt die Netzleitstelle, ob sie den Zug herausnehmen soll
+    const mine = this.trains.filter((t) => ok(t) && t.waitRed > 3600 && !this.il.sig(t.nextSig).auto && this.manualSt(near(t)) && this.time >= (this.jamAsk.get(t.id) ?? 0));
+    if (mine.length && !this.ops.calls.some((c) => c.kind === "verklemmt" && !c.answered && this.time < c.expires)) {
+      mine.sort((a, b) => b.waitRed - a.waitRed);
+      const t = mine[0];
+      this.jamAsk.set(t.id, this.time + 1800);
+      this.ops.call("Netzleitstelle", "verklemmt", `${t.no} steht seit ${Math.round(t.waitRed / 60)} Minuten vor ${this.il.sig(t.nextSig).name}. Kommt der noch weg, oder sollen wir ihn aus dem Bereich nehmen (Teilausfall, Zug wird abgestellt)?`,
+        [{ k: "nein", label: "Ich löse das selbst" }, { k: "raus", label: "Ja, Zug herausnehmen (−10 Punkte)" }], 600, { train: t.id });
+      this.jamCool = this.time + 300;
+      return;
+    }
+    const cand = this.trains.filter((t) => ok(t) && t.waitRed > 2400 && this.il.sig(t.nextSig).auto && !this.manualSt(near(t)));
     if (!cand.length) return;
     cand.sort((a, b) => b.waitRed - a.waitRed);
-    const t = cand[0];
-    const hs = this.headS(t);
-    let st = "TR", bd = Infinity;
-    for (const c of ["TR", "SB", "HN", "BL", "EI", "AU", "WI", "BZ"]) { const d = Math.abs(this.stS(c) - hs); if (d < bd) { bd = d; st = c; } }
-    if (this.manualSt(st)) return;
+    this.takeOut(cand[0]);
+  }
+  private jamAsk = new Map<number, number>();
+  takeOut(t: Train) {
     for (const e of t.body) this.vacate(e);
     t.body = [];
     this.il.releaseTrain(t.id);
@@ -1183,7 +1204,7 @@ export class World {
     u.couple = o.id;
     u.shunt = { edges: [u.body[u.body.length - 1], ...tg.edges], label: `Sperrfahrt an ${o.no}`, rev: tg.rev };
     u.dwelling = false; u.parked = false;
-    R.phase = 5;
+    R.phase = 6;
     u.radio.push({ t: this.time, from: "fdl", text: `${u.no}, Befehl: Sie fahren als Sperrfahrt in das gesperrte Gleis bis an ${o.no}, auf Sicht, höchstens 40 km/h, zuletzt Schrittgeschwindigkeit.` });
     u.radio.push({ t: this.time, from: "tf", text: `${u.no}: Befehl verstanden, fahre als Sperrfahrt an ${o.no}.` });
     this.note("Befehl", `Sperrfahrt ${u.no} in das gesperrte Gleis bis an ${o.no}`);
@@ -1231,12 +1252,12 @@ export class World {
       if (R.phase === 0 && this.time >= R.at) {
         R.phase = 1;
         o.radio.push({ t: this.time, from: "tf", text: `${o.no}: Die Störung lässt sich nicht beheben, der Zug kommt aus eigener Kraft nicht mehr weg.` });
-        this.ops.call(`Tf ${o.no}`, "liegen", `${o.no} kommt aus eigener Kraft nicht mehr weg. Soll ich eine Hilfslok anfordern? Sie kommt von vorne und zieht den Zug bis ${this.g.stations[R.st].name}. Oder ich versuche es noch ein letztes Mal.`,
-          [{ k: "lok", label: "Hilfslok anfordern" }, { k: "techniker", label: "Techniker schicken (ca. 30–50 min)" }, { k: "nochmal", label: "Noch einmal versuchen (10 min)" }], 240, { train: o.id });
+        this.ops.call(`Tf ${o.no}`, "liegen", `${o.no} kommt aus eigener Kraft nicht mehr weg. Ich brauche Hilfe: eine Hilfslok, die von vorne kommt und mich bis ${this.g.stations[R.st].name} zieht, oder einen Techniker. Das müssten Sie beim Notfallmanager anfordern. Oder ich versuche es noch ein letztes Mal.`,
+          [{ k: "hilfe", label: "Ich rufe den Notfallmanager" }, { k: "nochmal", label: "Noch einmal versuchen (10 min)" }], 240, { train: o.id });
       }
       if (u && !u.rescue) u.rescue = o.id;
       // Techniker vor Ort, oder die Hilfslok kommt nicht durch: nach spätestens 100 min repariert der Techniker den Zug notdürftig
-      const late = R.phase >= 2 && R.phase !== 5 && R.phase !== 6 && this.time - (R.start ?? R.at) > 6000;
+      const late = R.phase >= 2 && R.phase !== 5 && this.time - (R.start ?? R.at) > (R.phase === 6 ? 7800 : 6000);
       if ((R.phase === 5 && this.time >= R.at) || late) {
         this.rescues = this.rescues.filter((x) => x !== R);
         if (u) { u.rescue = undefined; if (u.shunt || u.dwelling) u.dissolveAt = this.time + 60; }
@@ -1913,6 +1934,12 @@ export class World {
   switchFault(n: number) { return this.il.faultySwitches.has(n); }
   signalFault(sid: number) { return this.il.faultySignals.has(sid); }
 
+  // Liegt dieser Streckenkilometer im Bereich des Spielers?
+  mineS(sPos: number): boolean {
+    let best = "", bd = Infinity;
+    for (const c of Object.keys(this.g.stations)) { const d = Math.abs(this.stS(c) - sPos); if (d < bd) { bd = d; best = c; } }
+    return !!best && this.manualSt(best);
+  }
   nearStation(x: number): string {
     let best = "", bd = Infinity;
     for (const s of Object.values(this.g.stations)) if (Math.abs(s.x - x) < bd) { bd = Math.abs(s.x - x); best = s.name; }
@@ -1954,7 +1981,9 @@ export class World {
       const n = sws[Math.floor(r() * sws.length)];
       const dur = 600 + Math.floor(r() * 900);
       this.il.faultySwitches.add(n.id);
-      this.addFault("switch", n.id, this.time + dur, `Weichenstörung ${n.swName} (${this.nearStation(n.x)}): lässt sich nicht umstellen, Techniker ca. ${Math.round(dur / 60)} min`);
+      const mine = this.mineS(n.s ?? 0);
+      this.addFault("switch", n.id, this.time + (mine ? 1e7 : dur), `Weichenstörung ${n.swName} (${this.nearStation(n.x)}): lässt sich nicht umstellen, ${mine ? "Störungstrupp rufen" : `Techniker ca. ${Math.round(dur / 60)} min`}`);
+      if (mine) this.phone.add("weiche", `Weichenstörung ${n.swName}`, this.nearStation(n.x), ["stoerung"], this.faults[this.faults.length - 1].id, true, { work: dur * 0.6 });
     }
     // Signalstörung: etwa alle 120 min
     if (r() < (k * W.sig) / 120) {
@@ -1962,7 +1991,9 @@ export class World {
       const s = sg[Math.floor(r() * sg.length)];
       const dur = 600 + Math.floor(r() * 1200);
       this.il.faultySignals.add(s.id);
-      this.addFault("signal", s.id, this.time + dur, `Signalstörung ${s.name}: zeigt keine Fahrt, Ersatzsignal geben (Strg + Klick), ca. ${Math.round(dur / 60)} min`);
+      const mine = this.mineS(this.g.nodes[s.node].s ?? 0);
+      this.addFault("signal", s.id, this.time + (mine ? 1e7 : dur), `Signalstörung ${s.name}: zeigt keine Fahrt, Ersatzsignal geben (Strg + Klick), ${mine ? "Störungstrupp rufen" : `ca. ${Math.round(dur / 60)} min`}`);
+      if (mine) this.phone.add("signal", `Signalstörung ${s.name}`, this.nearStation(this.g.nodes[s.node].x), ["stoerung"], this.faults[this.faults.length - 1].id, true, { work: dur * 0.6 });
     }
     // Fahrzeugstörung: etwa alle 150 min
     if (r() < k / 150) {
@@ -2383,6 +2414,11 @@ export class World {
     }
     t.trip = trip;
     t.stops = t.stops.slice(0, i + 1);
+    // Steht der Zug schon dort, braucht er die Ausfahrt in die alte Richtung nicht mehr
+    if (i === t.stopIdx && t.distNextSig < 1500) {
+      const sg = this.il.sig(t.nextSig), r = this.il.routes.get(sg.route);
+      if (r && !r.used) { this.il.cancel(sg.id); this.log(`Fahrstraße ${sg.name} zurückgenommen: ${t.no} wendet hier`, "info"); }
+    }
     if (!nx) this.umlaufCancel(old, `endet vorzeitig in ${name}`);
     this.log(nx ? `Disposition: ${t.no} wendet vorzeitig in ${name} und fährt als ${nx.no} zurück (Halte dahinter entfallen)` : `Disposition: ${t.no} endet vorzeitig in ${name} (Teilausfall)`, "warn");
     return null;

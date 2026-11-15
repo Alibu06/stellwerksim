@@ -28,6 +28,7 @@ export function saveGame(w: World, meta: Omit<SaveMeta, "savedAt">): string {
     lastOnEdge: [...w.lastOnEdge], zlMode: [...w.zlMode], orderSw: w.orderSw,
     ops: w.ops.save(),
     rescues: w.rescues,
+    phone: { matters: w.phone.matters, later: w.phone.later, log: w.phone.log, id: w.phone.id },
     edges: g.edges.map((e) => [e.occ, e.lock, e.overlap, e.slow ?? 0, e.closed ? 1 : 0, e.work ? 1 : 0, e.az ?? 0]),
     sw: g.nodes.filter((n) => n.swSide !== undefined).map((n) => [n.id, n.swPos]),
     sigs: g.signals.map((s) => [s.route, s.auto ? 1 : 0]),
@@ -43,6 +44,7 @@ export function saveGame(w: World, meta: Omit<SaveMeta, "savedAt">): string {
       sites: w.ext.sites.map((s) => ({ ...s, prev: [...s.prev] })),
       happenings: w.ext.happenings.map((h) => ({ ...h, prev: [...h.prev] })),
       connWarned: [...w.ext.connWarned],
+      layers: [...w.ext.layers], base: [...w.ext.base],
       id: (w.ext as any).id,
     },
   };
@@ -80,6 +82,7 @@ export function loadGame(w: World, json: string, allTrips: TripSpec[]) {
   w.orders = d.orders ?? []; w.orderNo = d.orderNo ?? 1; w.pendingRadio = d.pendingRadio ?? [];
   w.lastOnEdge = new Map(d.lastOnEdge ?? []);
   w.rescues = d.rescues ?? [];
+  if (d.phone) Object.assign(w.phone, d.phone);
   w.zlMode = new Map(d.zlMode ?? []);
   w.orderSw = d.orderSw ?? [];
   d.edges.forEach((x: number[], i: number) => {
@@ -116,6 +119,7 @@ export function loadGame(w: World, json: string, allTrips: TripSpec[]) {
   w.ext.sites = x.sites.map((s: any) => ({ ...s, prev: new Map(s.prev) }));
   w.ext.happenings = x.happenings.map((h: any) => ({ ...h, prev: new Map(h.prev) }));
   w.ext.connWarned = new Set(x.connWarned);
+  w.ext.layers = new Map(x.layers ?? []); w.ext.base = new Map(x.base ?? []);
   (w.ext as any).id = x.id;
   (w.ext as any).rebuildPoints();
   w.ext.applyPerfAll();

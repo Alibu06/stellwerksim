@@ -1,6 +1,7 @@
 import { buildCorridor } from "./data/corridor";
 import { buildTrips, RawTimetable } from "./sim/timetable";
 import { Train, World } from "./sim/world";
+import { CONTACTS } from "./sim/phone";
 import { View, CAT_COLOR as VIEW_CAT } from "./render/view";
 import { TrainWindow, trackHtml } from "./ui/trainWindow";
 import { ContextMenu, MenuItem } from "./ui/contextMenu";
@@ -306,7 +307,7 @@ async function boot() {
       const a = g.nodes[E.a];
       title = E.platform ? `${g.stations[E.platform.st].name} Gleis ${E.platform.track}` : `Gleisabschnitt bei ${w.nearStation(a.x)}`;
       const setSlow = (v: number) => {
-        E.slow = v || undefined;
+        w.ext.manual(h.edge, { slow: v || undefined });
         w.log(v ? `Langsamfahrstelle ${v} km/h ${title} eingerichtet` : `Langsamfahrstelle ${title} aufgehoben`, v ? "warn" : "info");
         w.note("La", v ? `Langsamfahrstelle ${v} km/h ${title} eingerichtet` : `Langsamfahrstelle ${title} aufgehoben`);
       };
@@ -316,7 +317,7 @@ async function boot() {
       ] });
       items.push({ label: E.closed ? "Sperrung aufheben" : "Gleis sperren", act: () => {
         if (!E.closed && (E.lock || E.occ)) return toast("Abschnitt ist belegt oder in einer Fahrstraße, erst räumen");
-        E.closed = !E.closed;
+        if (!w.ext.manual(h.edge, { closed: E.closed ? undefined : true })) return toast("Gleis bleibt gesperrt, solange das Ereignis dort andauert");
         w.log(`${title} ${E.closed ? "gesperrt" : "wieder frei"}`, E.closed ? "warn" : "info");
         w.note("Sperrung", `${title} ${E.closed ? "gesperrt" : "Sperrung aufgehoben"}`);
       } });
@@ -454,11 +455,20 @@ async function boot() {
     const calls = w.ops.calls.filter((c) => !c.answered);
     const recent = w.ops.calls.filter((c) => c.answered && c.answered !== "timeout" && w.time - c.t < 300);
     for (const c of calls) if (c.id > lastCallSeen) { lastCallSeen = c.id; toast(`☎ ${c.from} ruft an (Reiter „Zugmeldungen“)`); }
-    $("repCount").textContent = open.length + calls.length ? String(open.length + calls.length) : "";
+    const matters = w.phone.open();
+    $("repCount").textContent = open.length + calls.length + matters.length ? String(open.length + calls.length + matters.length) : "";
     const callHtml = (calls.length ? `<h3>Telefon</h3>` : "") + calls.map((c) => `<div class="rep call"><div><b>☎ ${c.from}</b> <small>${hm(c.t)} · noch ${Math.max(0, Math.ceil((c.expires - w.time) / 60))} min</small><br>${c.text}</div>
       <div class="callBtns">${c.opts.map((o) => `<button data-call="${c.id}" data-k="${o.k}">${o.label}</button>`).join("")}</div></div>`).join("") +
       recent.map((c) => `<div class="rep call done"><div><b>☎ ${c.from}</b> <small>${hm(c.t)}</small><br><small>${c.text}</small><br><small>Antwort: ${c.opts.find((o) => o.k === c.answered)?.label ?? c.answered}</small></div></div>`).join("");
-    const repHtml = callHtml + (open.length || outs.length ? `<h3>Zugmeldungen</h3>` : "") +
+    const phoneHtml = matters.length || w.phone.log.length ? `<h3>📞 Selbst anrufen</h3>` + matters.map((m) => {
+      const left = Math.max(0, Math.ceil((m.t + 1200 - w.time) / 60));
+      const btn = (c: (typeof CONTACTS)[number]) => m.choice && m.choice.contact === c.k && !m.called.includes(c.k)
+        ? m.choice.opts.map((o) => `<button data-phone="${m.id}" data-c="${c.k}" data-ch="${o.k}">${c.icon} ${c.label}: ${o.label}</button>`).join("")
+        : `<button data-phone="${m.id}" data-c="${c.k}" ${m.called.includes(c.k) ? "disabled" : ""}>${c.icon} ${c.label}</button>`;
+      return `<div class="rep call phone"><div><b>${m.title}</b> <small>${hm(m.t)} · ${m.where} · Notfallmanager übernimmt in ${left} min</small>${m.called.length ? `<br><small>Schon informiert: ${m.called.map((c) => CONTACTS.find((x) => x.k === c)!.label).join(", ")}</small>` : ""}</div>
+        <div class="callBtns">${CONTACTS.map(btn).join("")}</div></div>`;
+    }).join("") + (w.phone.log.length ? `<div class="phonelog">${w.phone.log.slice(-6).reverse().map((l) => `<div class="${l.me ? "me" : ""}"><small>${hm(l.t)}</small> <b>${l.who}</b>: ${l.text}</div>`).join("")}</div>` : "") : "";
+    const repHtml = phoneHtml + callHtml + (open.length || outs.length ? `<h3>Zugmeldungen</h3>` : "") +
       open.map((r) => {
         const at = r.trip.entryTime + r.trip.initialDelay;
         return `<div class="rep"><div><b>${r.no}</b> von Fdl ${g.portals[r.portal].label}<br><small>${r.trip.from} → ${r.trip.to} · Einfahrt ca. ${hm(at)}${r.trip.initialDelay >= 180 ? ` (+${Math.round(r.trip.initialDelay / 60)})` : ""}</small></div><button data-acc="${r.id}">Annehmen</button></div>`;
@@ -475,6 +485,13 @@ async function boot() {
   };
   // Klicks in den Listen über Delegation: funktionieren auch, wenn die Liste gerade neu gezeichnet wurde
   $("tab-next").addEventListener("click", (e) => {
+    const pb = (e.target as HTMLElement).closest<HTMLElement>("[data-phone]");
+    if (pb) {
+      const why = w.phone.dial(Number(pb.dataset.phone), pb.dataset.c as any, pb.dataset.ch || undefined);
+      if (why) toast(why);
+      renderLists();
+      return;
+    }
     const cb = (e.target as HTMLElement).closest<HTMLElement>("[data-call]");
     if (cb) {
       const why = w.ops.answer(Number(cb.dataset.call), cb.dataset.k!);
@@ -679,6 +696,7 @@ async function boot() {
         return null;
       }
       case "call": return w.ops.answer(Number(d.id), String(d.k));
+      case "phone": return w.phone.dial(Number(d.id), d.c, d.ch || undefined);
       case "bus": return w.ops.waitBus(Number(d.id), Number(d.bus));
       case "zl": return w.setZl(Number(d.key), String(d.mode));
       case "order": return w.issueOrder(Number(d.id), String(d.kind), Number(d.v ?? 40), String(d.reason ?? ""));

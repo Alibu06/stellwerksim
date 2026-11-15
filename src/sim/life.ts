@@ -110,10 +110,10 @@ export class Life {
       if (!ns) return;
       const hub = t.stops.find((x, i) => i >= t.stopIdx && !x.done && HUBS.includes(x.st) && x !== ns);
       const what = ["Fahrgast mit Kreislaufproblemen", "Fahrgast ist gestürzt und hat sich verletzt", "Fahrgast hat Atemnot", "ältere Dame ist zusammengebrochen"][Math.floor(r() * 4)];
-      const opts = [{ k: "next", label: `Rettungsdienst nach ${this.name(ns.st)}` }];
-      if (hub && !HUBS.includes(ns.st)) opts.push({ k: "hub", label: `Rettungsdienst nach ${this.name(hub.st)} (größerer Bahnhof)` });
-      this.call(`Tf ${t.no} (${t.driver})`, "medizin", `Ich habe hier einen Notfall: ${what}. Ich brauche den Rettungsdienst. Nächster Halt ist ${this.name(ns.st)}.${opts.length > 1 ? ` In ${this.name(hub!.st)} wäre die Rettungswache näher, dauert dort kürzer, ist aber weiter weg.` : ""}`,
-        opts, 120, { train: t.id, next: ns.st, hub: hub?.st, no: t.no });
+      const opts = [{ k: "next", label: `Halt in ${this.name(ns.st)}` }];
+      if (hub && !HUBS.includes(ns.st)) opts.push({ k: "hub", label: `Weiter bis ${this.name(hub.st)}` });
+      this.call(`Tf ${t.no} (${t.driver})`, "medizin", `Ich habe hier einen Notfall: ${what}. Wo soll ich halten? Nächster Halt ist ${this.name(ns.st)}.${opts.length > 1 ? ` In ${this.name(hub!.st)} ist die Rettungswache näher, dort geht es schneller, ist aber weiter weg.` : ""} Bitte rufen Sie den Rettungsdienst dorthin.`,
+        opts, 120, { train: t.id, next: ns.st, hub: hub?.st, no: t.no, what });
     } else {
       // Tf meldet etwas an der Strecke
       const s = w.headS(t);
@@ -204,8 +204,9 @@ export class Life {
       const tracks = w.platformTracks(st);
       const tr = tracks[Math.floor(r() * tracks.length)].track;
       const what = ["Herrenloser Koffer", "Verdächtiger Rucksack", "Herrenlose Tasche"][Math.floor(r() * 3)];
-      this.call("Bundespolizei", "bahnsteig", `${what} auf dem Bahnsteig an Gleis ${tr} in ${this.name(st)}. Bitte das Gleis sperren, kein Zug darf dort halten oder durchfahren. Dauert etwa 30 bis 45 Minuten.`,
-        [{ k: "sperren", label: `Gleis ${tr} sperren` }, { k: "spaeter", label: "Erst Zug am Gleis ausfahren lassen" }], 120, { st, tr, what });
+      const edges = w.g.edges.map((E, i) => ({ E, i })).filter(({ E }) => E.platform?.st === st && E.platform?.track === tr).map(({ i }) => i);
+      this.call(`Örtliche Aufsicht ${this.name(st)}`, "tfinfo", `${what} auf dem Bahnsteig an Gleis ${tr}. Niemand weiß, wem es gehört. Bitte die Bundespolizei verständigen.`, [{ k: "ok", label: "Verstanden" }], 120);
+      w.phone.add("bahnsteig", `${what} am Bahnsteig Gleis ${tr}`, `${this.name(st)} Gleis ${tr}`, ["polizei"], 0, true, { st, tr, what, edges });
     } else {
       // Sturmwarnung: vorsorgliche La oder Risiko
       const secs = SECTIONS.filter(([a, b]) => this.mineSt(a) || this.mineSt(b));
@@ -293,13 +294,12 @@ export class Life {
         const t = tr(D.train);
         if (!t) return "Zug ist nicht mehr im Bereich";
         const st = k === "hub" && D.hub && !timeout ? D.hub : D.next;
-        const sec = (HUBS.includes(st) ? 360 : 600) + this.r() * 300;
+        const sec = (HUBS.includes(st) ? 240 : 420) + this.r() * 240;
         t.medStop = { st, sec };
         if (!t.stops.some((x, i) => i >= t.stopIdx && x.st === st && !x.done)) w.addStop(t, st);
-        if (timeout) w.log(`Notfallmanager hat den Rettungsdienst für ${t.no} nach ${this.name(st)} bestellt`, "info");
-        else { w.score.points += 5; w.log(`Rettungsdienst für ${t.no} nach ${this.name(st)} bestellt (+5 Punkte)`, "info"); }
-        t.radio.push({ t: w.time, from: "fdl", text: `${t.no}, Rettungsdienst ist alarmiert und wartet in ${this.name(st)}.` });
-        w.note("Notfall", `${t.no}: Rettungsdienst nach ${this.name(st)}`);
+        t.radio.push({ t: w.time, from: "fdl", text: `${t.no}, halten Sie in ${this.name(st)}, ich rufe den Rettungsdienst dorthin.` });
+        w.note("Notfall", `${t.no}: Fahrgast braucht Rettungsdienst in ${this.name(st)}`);
+        w.phone.add("medizin", `Notfall in ${t.no}: ${D.what ?? "Fahrgast braucht Hilfe"}`, this.name(st), ["rettung"], t.id, this.mineSt(st), { train: t.id });
         return null;
       }
       case "anschluss": {

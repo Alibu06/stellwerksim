@@ -175,9 +175,19 @@ export class Ops {
         this.rotteUnlock();
         return null;
       }
+      case "verklemmt": {
+        const t = tr(D.train);
+        if (!t) return null;
+        if (k === "raus" && !timeout) { w.score.points -= 10; w.takeOut(t); }
+        return null;
+      }
       case "liegen": {
-        w.rescueRequest(D.train, k === "nochmal" && !timeout, k === "techniker" && !timeout);
-        if (timeout) w.log("Notfallmanager hat die Hilfslok selbst angefordert", "info");
+        if (k === "nochmal" && !timeout) { w.rescueRequest(D.train, true); return null; }
+        const t = tr(D.train);
+        const R = w.rescues.find((x) => x.broken === D.train);
+        if (!t || !R) return null;
+        w.phone.add("liegen", `${t.no} liegt fest`, `km ${(w.headS(t) / 1000).toFixed(1).replace(".", ",")}`, ["notfall"], t.id, w.manualSt(R.st), { train: t.id },
+          { contact: "notfall", opts: [{ k: "lok", label: "Hilfslok anfordern" }, { k: "techniker", label: "Techniker schicken" }] });
         return null;
       }
       case "hilfslok": {
@@ -262,7 +272,8 @@ export class Ops {
       o.radio.push({ t: w.time, from: "tf", text: o === t ? `Notruf, Notruf! Hier ${t.no} bei km ${(s / 1000).toFixed(1).replace(".", ",")}: ${reason}! Alle Züge sofort anhalten!` : `${o.no}: Notruf gehört, ich halte an.` });
     }
     const km = (s / 1000).toFixed(1).replace(".", ",");
-    this.notruf = { s, reason, trains: near.map((o) => o.id), clearAt: w.time + 300 + r() * 420, from: t.no, phase: 0 };
+    this.notruf = { s, reason, trains: near.map((o) => o.id), clearAt: Infinity, from: t.no, phase: 0 };
+    w.phone.add("notruf", `GSM-R-Notruf: ${reason}`, `km ${(s / 1000).toFixed(1).replace(".", ",")} (${t.no})`, [/Personen|Kinder/.test(reason) ? "polizei" : "notfall"], 0, w.mineS(s));
     w.log(`GSM-R-Notruf von ${t.no} bei km ${km} (${w.nearStation(w.g.nodes[w.g.edges[t.body[t.body.length - 1]].a].x)}): ${reason}. ${near.length} Züge halten sofort`, "bad");
     w.note("Notruf", `GSM-R-Notruf von ${t.no} bei km ${km}: ${reason}`);
     this.call(`GSM-R-Notruf (${t.no})`, "notruf", `Notruf bei km ${km}: ${reason}. Alle Züge im Umkreis haben eine Zwangsbremsung eingeleitet und stehen.`, [{ k: "ok", label: "Notruf quittieren" }], 90);
@@ -323,7 +334,7 @@ export class Ops {
     const w = this.w, R = this.rotte!;
     R.phase = 1; R.asked = w.time + 900 + this.rand() * 900;
     R.prev = R.edges.map((e) => [e, { slow: w.g.edges[e].slow, closed: w.g.edges[e].closed }]);
-    for (const e of R.edges) { const E = w.g.edges[e]; E.slow = Math.min(E.slow ?? 999, 80); E.rotte = true; }
+    w.ext.layer("rv", R.edges, { slow: 80 }); for (const e of R.edges) w.g.edges[e].rotte = true;
     w.log(`${R.name} arbeitet neben dem Gleis bei km ${this.km(R.s)}. Züge geben Achtungssignal (Zp 1) und fahren dort höchstens 80 km/h`, "info");
     w.note("Rotte", `${R.name} (${R.men} Mann, ${R.job}) bei km ${this.km(R.s)} zwischen ${w.g.stations[R.a].name} und ${w.g.stations[R.b].name}, Sicherung durch Sicherungsposten`);
   }
@@ -354,7 +365,7 @@ export class Ops {
     }
     if (R.phase === 3 && !R.at) {
       if (R.edges.some((e) => w.g.edges[e].occ || w.g.edges[e].lock)) return; // erst wenn frei
-      for (const e of R.edges) w.g.edges[e].closed = true;
+      w.ext.layer("rx", R.edges, { closed: true });
       for (const x of [...w.il.routes.values()]) if (!x.used && x.path.edges.some((e) => set.has(e))) w.cancelRoute(x.path.sig);
       R.at = w.time; R.until = w.time + 900 + r() * 900;
       w.log(`Gleis bei km ${this.km(R.s)} für ${R.name} gesperrt. Du an Rotte: "Gleis ist gesperrt, Sie dürfen ins Gleis."`, "info");
@@ -369,7 +380,7 @@ export class Ops {
   private rotteUnlock() {
     const w = this.w, R = this.rotte;
     if (!R) return;
-    for (const [e, p] of R.prev) w.g.edges[e].closed = p.closed;
+    w.ext.unlayer("rx", R.edges);
     R.phase = 5; R.until = w.time + 300 + this.rand() * 600;
     w.log(`Sperrung für ${R.name} aufgehoben, Gleis wieder befahrbar. Restarbeiten neben dem Gleis`, "good");
     w.note("Sperrung", `Gleissperrung für ${R.name} aufgehoben (Rotte meldet: Gleis geräumt und befahrbar)`);
@@ -377,7 +388,7 @@ export class Ops {
   private rotteEnd() {
     const w = this.w, R = this.rotte;
     if (!R) return;
-    for (const [e, p] of R.prev) { const E = w.g.edges[e]; E.slow = p.slow; E.closed = p.closed; E.rotte = undefined; }
+    w.ext.unlayer("rx", R.edges); w.ext.unlayer("rv", R.edges); for (const e of R.edges) w.g.edges[e].rotte = undefined;
     w.log(`${R.name} hat die Arbeiten beendet und meldet sich ab`, "good");
     w.note("Rotte", `${R.name} hat sich abgemeldet`);
     this.rotte = undefined;

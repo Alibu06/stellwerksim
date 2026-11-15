@@ -23,6 +23,8 @@ export interface Snapshot {
   conns: { id: number; feeder: string; conn: string; st: string; dep: number; wait: number; text: string }[];
   tracks: Record<string, string[]>;
   book: { t: number; kind: string; text: string }[];
+  matters: { id: number; title: string; where: string; t: number; called: string[]; choice?: { contact: string; opts: { k: string; label: string }[] } }[];
+  phoneLog: { t: number; who: string; text: string; me?: boolean }[];
   calls: { id: number; t: number; from: string; text: string; opts: { k: string; label: string }[]; answered?: string; expires: number }[];
 }
 
@@ -69,6 +71,8 @@ export function makeSnapshot(w: World, g: Graph): Snapshot {
         text: `Zubringer kommt ca. ${c.wait} min zu spät zum Umstieg` };
     }),
     book: w.book.slice(-60),
+    matters: w.phone.open().map((m) => ({ id: m.id, title: m.title, where: m.where, t: m.t, called: m.called, choice: m.choice })),
+    phoneLog: w.phone.log.slice(-6),
     calls: w.ops.calls.filter((c) => !c.answered || w.time - c.t < 900).map(({ data, kind, ...c }) => c),
     tracks: Object.fromEntries(Object.keys(g.stations).map((c) => [c, w.platformTracks(c).map((x) => x.track)])),
   };

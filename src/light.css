@@ -56,6 +56,8 @@ html.light .rep { background: #f2f0e5; border: 1px solid #ded6ba; }
 html.light .rep.out { background: #dee6ef; }
 html.light .rep button { background: #a7d5b9; border: 1px solid #24a55f; color: #141414; }
 html.light .rep.call { background: #dce5ee; border-color: #2f6fa8; }
+html.light .phonelog { background: #e4ebf2; }
+html.light .phonelog .me { color: #568cc1; }
 html.light .callBtns button + button { background: #cbd0d8; border-color: #a1a1b1; }
 html.light .wx { color: #84b0d9; }
 html.light .site { background: #f0f0e7; border: 1px solid #e1dfc0; }
