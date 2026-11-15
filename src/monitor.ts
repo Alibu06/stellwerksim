@@ -294,7 +294,7 @@ function stopRow(t: SnapTrain, p: SnapStop) {
 function dispoActs(t: SnapTrain): string {
   let html = "";
     if (t.live && t.turnOpts?.length) {
-      html += `<div class="act"><b>Vorzeitig wenden</b><small>${t.turnInto ? `Der Zug endet früher und fährt als ${esc(t.turnInto)} ab dort zurück. Die Halte dahinter entfallen in beide Richtungen.` : "Der Zug endet früher (Teilausfall). Die Halte dahinter entfallen."}</small>
+      html += `<div class="act"><b>Vorzeitig wenden</b><small>${t.turnInto ? `Der Zug endet früher und fährt als ${esc(t.turnInto)} ab dort zurück. Die Halte dahinter entfallen in beide Richtungen.` : `Der Zug endet früher (Teilausfall). Die Halte dahinter entfallen.${t.umlauf ? ` Seine Rückleistung ${esc(t.umlauf)} fällt dann aus, weil das Fahrzeug fehlt.` : ""}`}</small>
         <div class="ra"><select data-k="turn${t.id}">${opt(`turn${t.id}`, t.turnOpts.map((c) => [c, stName(c)]))}</select><button class="no" data-a="turn">${t.turnInto ? "Dort wenden" : "Dort enden lassen"}</button></div></div>`;
     }
     if (t.live && t.ovSt?.length && t.ovBy?.length) {

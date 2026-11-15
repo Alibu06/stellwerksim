@@ -9,7 +9,7 @@ export interface SnapTrain {
   id: number; no: string; cat: string; line: string; from: string; to: string; dir: number;
   s: number; v: number; delay: number; live: boolean; stops: SnapStop[]; status: string; reason?: string; entry?: number;
   key: number; where?: string; hold?: boolean; fault?: string; waitFor?: string; radio?: { t: number; from: string; text: string }[];
-  turnOpts?: string[]; ovSt?: string[]; ovBy?: { id: number; no: string }[]; turnInto?: string;
+  turnOpts?: string[]; umlauf?: string; ovSt?: string[]; ovBy?: { id: number; no: string }[]; turnInto?: string;
 }
 export interface Snapshot {
   time: number;
@@ -33,7 +33,7 @@ export function makeSnapshot(w: World, g: Graph): Snapshot {
     const wf = t.waitFor && w.trains.find((o) => o.id === t.waitFor!.train);
     return {
       key: t.trip.key, where: w.position(t).text, hold: t.hold, fault: t.fault && t.faultUntil > w.time ? t.fault : undefined,
-      waitFor: wf ? `${wf.no} in ${g.stations[t.waitFor!.st].name}` : undefined, radio: t.radio.slice(-14), turnInto: t.trip.turnInto?.no,
+      waitFor: wf ? `${wf.no} in ${g.stations[t.waitFor!.st].name}` : undefined, radio: t.radio.slice(-14), turnInto: t.trip.turnInto?.no, umlauf: w.umlaufNo(t.trip),
       turnOpts: w.shortTurnOptions(t), ovSt: w.overtakeStations(t), ovBy: w.overtakers(t).map((o) => ({ id: o.id, no: o.no })),
       id: t.id, no: t.no, cat: t.cat, line: t.trip.line, from: t.trip.from, to: t.trip.to, dir: t.dir,
       s: w.headS(t), v: t.v, delay: w.liveDelay(t), live: true, status: st[0]?.text ?? "", reason: t.reason,

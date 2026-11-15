@@ -30,6 +30,8 @@ export interface TripSpec {
   dec: number;
   mass?: number; // t (Güterzüge)
   initialDelay: number; // Sekunden
+  delayCause?: string; // Herkunft der Anfangsverspätung (z. B. Umlauf)
+  special?: string; // Sonderzug-Art
 }
 
 interface RawTrain {

@@ -147,7 +147,54 @@ export class World {
     this.ext = new Extras(this);
     // Züge, deren Fahrt bei Spielbeginn schon vorbei ist, entfallen; Wendezüge werden vom Vorgänger übernommen
     this.pending = trips.filter((t) => !t.turnedFrom && t.entryTime + t.initialDelay >= startTime - 60);
+    this.buildUmlauf(trips);
   }
+
+  // ---------------- Umläufe außerhalb des Bereichs ----------------
+  // Ein Zug, der den Bereich verlässt, kommt mit demselben Fahrzeug später als Gegenzug derselben Linie zurück.
+  umlaufNext = new Map<number, { trip: TripSpec; slack: number }>();
+  private buildUmlauf(trips: TripSpec[]) {
+    const lastDep = (t: TripSpec) => (t.stops.length ? t.stops[t.stops.length - 1].dep : t.entryTime);
+    const outs = trips.filter((t) => t.exitPortal && t.cat !== "G").sort((a, b) => lastDep(a) - lastDep(b));
+    const ins = trips.filter((t) => t.entryPortal && t.cat !== "G" && !t.turnedFrom);
+    const used = new Set<TripSpec>();
+    const pairs: { a: TripSpec; b: TripSpec; gap: number; k: string }[] = [];
+    for (const a of outs) {
+      const te = lastDep(a);
+      let best: TripSpec | undefined, bg = Infinity;
+      for (const b of ins) {
+        if (used.has(b) || b.entryPortal !== a.exitPortal || b.line !== a.line || b.dir === a.dir) continue;
+        const gap = b.entryTime - te;
+        if (gap >= 900 && gap <= 4 * 3600 && gap < bg) { bg = gap; best = b; }
+      }
+      if (!best) continue;
+      used.add(best);
+      pairs.push({ a, b: best, gap: bg, k: `${a.exitPortal}|${a.line}` });
+    }
+    const minGap = new Map<string, number>();
+    for (const p of pairs) minGap.set(p.k, Math.min(minGap.get(p.k) ?? Infinity, p.gap));
+    for (const p of pairs) this.umlaufNext.set(p.a.key, { trip: p.b, slack: p.gap - minGap.get(p.k)! });
+  }
+  private umlaufExit(t: Train) {
+    const n = this.umlaufNext.get(t.trip.key);
+    if (!n || !this.pending.includes(n.trip)) return;
+    const add = this.liveDelay(t) - n.slack;
+    if (add > 120 && add > n.trip.initialDelay) {
+      n.trip.initialDelay = add;
+      n.trip.delayCause = `Verspätung aus dem Umlauf (Vorleistung ${t.no})`;
+      this.pending.sort((a, b) => a.entryTime + a.initialDelay - (b.entryTime + b.initialDelay));
+      this.log(`Umlauf: Das Fahrzeug von ${t.no} kommt als ${n.trip.no} zurück, voraussichtlich +${Math.round(add / 60)} min`, "info");
+    }
+  }
+  // Fahrzeug fehlt: Rückleistung entfällt
+  private umlaufCancel(trip: TripSpec, why: string) {
+    const n = this.umlaufNext.get(trip.key);
+    if (!n || !this.pending.includes(n.trip)) return;
+    this.pending = this.pending.filter((x) => x !== n.trip);
+    this.reports = this.reports.filter((r) => r.trip !== n.trip);
+    this.log(`Umlauf: ${n.trip.no} fällt aus, weil das Fahrzeug von ${trip.no} fehlt (${why})`, "warn");
+  }
+  umlaufNo(trip: TripSpec): string | undefined { return this.umlaufNext.get(trip.key)?.trip.no; }
 
   log(text: string, kind: GameEvent["kind"] = "info") {
     this.events.push({ t: this.time, text, kind });
@@ -207,7 +254,7 @@ export class World {
       acc: trip.acc, dec: trip.dec, v: 0, dir: trip.dir, body, headPos,
       stops: trip.stops.map((s) => ({ ...s, done: false, plan: this.planTrack(s.st, trip.dir, trip.line, trip.to) })), stopIdx: 0, dwellUntil: 0, dwelling: false,
       exiting: false, gone: false, delay: trip.initialDelay, delayIn: trip.initialDelay, nextSig: 0, distNextSig: Infinity,
-      stopAheadIsPlatform: false, waitRed: 0, standStill: 0, reverseAt: 0, dissolveAt: 0, faultUntil: 0, sight: false, hold: false, causes: trip.initialDelay > 60 ? { "Verspätung aus dem Vorbereich": trip.initialDelay } : {}, extraDwell: 0, radio: [], ...this.crew(trip),
+      stopAheadIsPlatform: false, waitRed: 0, standStill: 0, reverseAt: 0, dissolveAt: 0, faultUntil: 0, sight: false, hold: false, causes: trip.initialDelay > 60 ? { [trip.delayCause ?? "Verspätung aus dem Vorbereich"]: trip.initialDelay } : {}, extraDwell: 0, radio: [], ...this.crew(trip),
     };
     this.ext.applyPerf(t);
     for (const st of t.stops) st.disp = this.dispTrack.get(`${trip.key}|${st.st}`);
@@ -878,6 +925,7 @@ export class World {
   private finish(t: Train, viaPortal: boolean) {
     t.gone = true;
     if (viaPortal) {
+      this.umlaufExit(t);
       for (let i = t.stopIdx; i < t.stops.length; i++) this.missStop(t, i);
       this.tripDone(t);
     }
@@ -1367,6 +1415,7 @@ export class World {
     }
     t.trip = trip;
     t.stops = t.stops.slice(0, i + 1);
+    if (!nx) this.umlaufCancel(old, `endet vorzeitig in ${name}`);
     this.log(nx ? `Disposition: ${t.no} wendet vorzeitig in ${name} und fährt als ${nx.no} zurück (Halte dahinter entfallen)` : `Disposition: ${t.no} endet vorzeitig in ${name} (Teilausfall)`, "warn");
     return null;
   }
@@ -1377,6 +1426,7 @@ export class World {
     this.pending = this.pending.filter((x) => x !== trip);
     this.reports = this.reports.filter((r) => r.trip !== trip);
     this.log(`Disposition: ${trip.no} (${trip.from} → ${trip.to}) fällt aus`, "warn");
+    this.umlaufCancel(trip, "Ausfall");
     return null;
   }
 

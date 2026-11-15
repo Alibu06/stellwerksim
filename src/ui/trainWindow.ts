@@ -128,6 +128,7 @@ export class TrainWindow {
           <tr><td>Tf</td><td>${esc(t.driver)}</td></tr>
           <tr><td>Nächstes Signal</td><td>${t.nextSig ? `${w.il.sig(t.nextSig).name} in ${Math.round(t.distNextSig)} m` : "–"}</td></tr>
           <tr><td>Weiter</td><td>${t.trip.exitPortal ? `Richtung ${g.portals[t.trip.exitPortal].label}` : t.trip.turnInto ? `wendet als ${t.trip.turnInto.no}` : "endet hier"}</td></tr>
+          ${w.umlaufNo(t.trip) ? `<tr><td>Umlauf</td><td>kommt zurück als ${w.umlaufNo(t.trip)}</td></tr>` : ""}
         </table>
         <div class="tact"><button data-a="center">Im Gleisbild zeigen</button><button data-a="${t.hold ? "go" : "hold"}">${t.hold ? "Halt aufheben" : "Halt anordnen"}</button></div>`;
   }
