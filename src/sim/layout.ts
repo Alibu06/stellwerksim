@@ -5,11 +5,11 @@ import { Dir, GEdge, GNode, Graph, Signal, SignalKind, placeDistants } from "./g
 // Kantenlängen ergeben sich aus den echten Abständen, die x-Position für die Darstellung
 // wird daraus berechnet (Bahnhöfe gedehnt, freie Strecke gestaucht).
 
-interface Lane { y: number; s1: number; s2: number; v: number; pref?: Dir; }
+interface Lane { y: number; s1: number; s2: number; v: number; pref?: Dir; name?: string; }
 interface Conn { s1: number; y1: number; s2: number; y2: number; v: number; len?: number; }
 interface Zone { s1: number; s2: number; }
 
-export interface LaneOpts { v?: number; pref?: Dir; }
+export interface LaneOpts { v?: number; pref?: Dir; name?: string; }
 
 const M_ZONE = 75; // Meter pro Rastereinheit in Bahnhöfen
 const M_LINE = 380; // Meter pro Rastereinheit auf freier Strecke
@@ -31,7 +31,7 @@ export class Layout {
   zone(s1: number, s2: number) { this.zones.push({ s1, s2 }); }
 
   lane(y: number, s1: number, s2: number, o: LaneOpts = {}) {
-    this.lanes.push({ y, s1: Math.min(s1, s2), s2: Math.max(s1, s2), v: o.v ?? 120, pref: o.pref });
+    this.lanes.push({ y, s1: Math.min(s1, s2), s2: Math.max(s1, s2), v: o.v ?? 120, pref: o.pref, name: o.name });
   }
 
   // Zweigleisige Strecke: yW = Regelgleis Richtung West, yE = Richtung Ost
@@ -154,7 +154,8 @@ export class Layout {
         const a = node(pts[i], l.y), b = node(pts[i + 1], l.y);
         const mid = (pts[i] + pts[i + 1]) / 2;
         const sp = this.speeds.filter((q) => q.y === l.y && mid > q.s1 && mid < q.s2).pop();
-        addEdge(a, b, pts[i + 1] - pts[i], sp ? sp.v : l.v, l.pref);
+        const ne = addEdge(a, b, pts[i + 1] - pts[i], sp ? sp.v : l.v, l.pref);
+        if (l.name) ne.name = l.name;
       }
     }
     for (const c of this.conns) {

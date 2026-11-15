@@ -74,6 +74,19 @@ export function buildCorridor(): Graph {
   L.sig(6950, 12, -1, "TR P9"); L.sig(6950, 13, -1, "TR P10");
   L.sig(7400, 12, 1, "TR N9"); L.sig(7400, 13, 1, "TR N10");
   L.xo(7700, 11, 10, 100);
+  // Abstellgruppe Süd (Güterbahnhof, nach OSM mehrere Stumpfgleise südlich von Gl. 10)
+  L.conn(6925, 13, 6990, 14.2, 30);
+  L.lane(14.2, 6990, 7620, { v: 25, name: "Abstellgleis 11" });
+  L.conn(7020, 14.2, 7080, 15.1, 25);
+  L.lane(15.1, 7080, 7580, { v: 25, name: "Abstellgleis 12" });
+  L.conn(7110, 15.1, 7170, 16, 25);
+  L.lane(16, 7170, 7540, { v: 25, name: "Abstellgleis 13" });
+  L.label(7300, 16.8, "Abstellgruppe Süd");
+  // Abstellgleise Nord an der S-Bahn (stumpf, von Westen)
+  L.conn(6080, 4, 6150, 3.1, 30);
+  L.lane(3.1, 6150, 6720, { v: 25, name: "Abstellgleis 41" });
+  L.conn(6190, 3.1, 6250, 2.3, 25);
+  L.lane(2.3, 6250, 6680, { v: 25, name: "Abstellgleis 42" });
   // Bahnsteige
   for (const [y, t] of [[4, "1"], [5, "2"], [7, "5"], [8, "6"], [10, "7"], [11, "8"]] as const) {
     L.plat(6900, 7250, y, "TR", t);
@@ -238,30 +251,42 @@ function finishEast(L: Layout): Graph {
   L.blk(48520, 4, 5, "Sbk 485"); L.blk(49336, 4, 5, "Sbk 493");
 
   // ---------------- Au (Sieg) (AU) ----------------
-  // Gl. 2 (y 4), Gl. 1 (y 5), Gl. 11 Westerwaldstrecke (y 6), Gl. 31 (y 3)
+  // nach OSM: Gl. 2 (y 4), Gl. 1 (y 5), Gl. 11 Westerwaldstrecke (y 6),
+  // nördlich Gl. 31 (stumpf mit Ausziehgleis, y 3.2), Gl. 32 (stumpf von Osten, y 3.2),
+  // Abstellgleise 4 (y 2.4), 5 (y 1.6) und 6 (y 0.8), an beiden Enden an Gl. 2 angebunden
   L.sig(51212, 5, 1, "AU A1"); L.sig(51212, 4, -1, "AU A2", "block");
   L.lane(7, 50600, 51300, { v: 50 });
   L.portal("WW", 50600, 7, 7, 1, "Altenkirchen (Westerwald)");
   L.sig(51250, 7, 1, "AU A11");
   L.conn(51300, 7, 51387, 6, 40);
   L.lane(6, 51387, 52200, { v: 40 });
-  L.xo(51420, 4, 5, 80);
+  L.xo(51450, 4, 5, 60);
   L.conn(51480, 6, 51570, 5, 40);
-  L.xo(51600, 5, 4, 80);
-  L.conn(51700, 4, 51790, 3, 40);
-  L.lane(3, 51790, 52300, { v: 40 });
-  L.conn(52300, 3, 52380, 4, 40);
+  L.xo(51590, 5, 4, 60);
   for (const [y, t] of [[4, "2"], [5, "1"], [6, "11"]] as const) {
     L.plat(51760, 52130, y, "AU", t);
     L.sig(51760, y, -1, `AU P${t}`);
     L.sig(52130, y, 1, `AU N${t}`); // Gl. 11: Gleisende-Signal am Stumpfgleis
   }
-  L.sig(51850, 3, -1, "AU P31"); L.sig(52150, 3, 1, "AU N31");
-  L.lane(2, 51820, 52160, { v: 25 }); L.conn(52160, 2, 52240, 3, 25); // Gl. 32 Abstellgleis (stumpf)
-  L.label(51900, 1.55, "Abstellgleis");
+  // Westkopf der Abstellgruppe
+  L.conn(51530, 4, 51580, 3.2, 30);
+  L.lane(3.2, 51330, 51980, { v: 25, name: "Gleis 31" }); // Gl. 31 mit Ausziehgleis nach Westen
+  L.conn(51615, 3.2, 51660, 2.4, 25);
+  L.lane(2.4, 51660, 52270, { v: 25, name: "Abstellgleis 4" }); // Gl. 4
+  L.conn(51690, 2.4, 51730, 1.6, 25);
+  L.lane(1.6, 51730, 52200, { v: 25, name: "Abstellgleis 5" }); // Gl. 5
+  L.conn(51750, 1.6, 51790, 0.8, 25);
+  L.lane(0.8, 51790, 52160, { v: 25, name: "Abstellgleis 6" }); // Gl. 6
+  // Ostkopf
+  L.conn(52160, 0.8, 52200, 1.6, 25);
+  L.conn(52200, 1.6, 52240, 2.4, 25);
+  L.conn(52270, 2.4, 52320, 4, 30);
+  L.lane(3.2, 52010, 52220, { v: 25, name: "Gleis 32" }); L.conn(52220, 3.2, 52262, 4, 25); // Gl. 32 stumpf
+  L.label(51960, 0.15, "Abstellgleise 4–6");
+  L.label(51420, 2.75, "Gl. 31");
   L.xo(52420, 4, 5, 80); L.xo(52520, 5, 4, 80);
   L.sig(52849, 4, -1, "AU F2"); L.sig(52849, 5, 1, "AU F1", "block");
-  L.station("AU", "Au (Sieg)", 51943, 1.6);
+  L.station("AU", "Au (Sieg)", 51943, -0.6);
   L.label(50700, 8.2, "Westerwaldstrecke");
 
   // ---------------- Etzbach (EZ) ----------------

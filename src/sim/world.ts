@@ -168,6 +168,14 @@ export class World {
     this.life = new Life(this);
     this.phone = new Phone(this);
     // Züge, deren Fahrt bei Spielbeginn schon vorbei ist, entfallen; Wendezüge werden vom Vorgänger übernommen
+    // Lange Wende in Au (Sieg): Zug fährt ins Abstellgleis und wird später wieder bereitgestellt
+    for (const a of trips) {
+      const b = a.turnInto;
+      if (!b || a.exitPortal) continue;
+      const la = a.stops[a.stops.length - 1], fb = b.stops[0];
+      if (!la || !fb || la.st !== fb.st || la.st !== "AU" || fb.dep - la.arr < 1800) continue;
+      a.turnInto = undefined; b.turnedFrom = undefined;
+    }
     this.allTrips = trips;
     this.pending = trips.filter((t) => !t.turnedFrom && t.entryTime + t.initialDelay >= startTime - 60);
     this.buildUmlauf(trips);
@@ -840,7 +848,8 @@ export class World {
   private lastEdgeOf(x: ShuntTarget) { const l = x.rev?.edges ?? x.edges; return this.g.edges[l[l.length - 1]]; }
   private parkAuto(t: Train): boolean {
     if (this.canShunt(t)) return false;
-    const tg = this.shuntTargets(t).filter((x) => { const E = this.lastEdgeOf(x); return !E.platform && E.len >= t.len + 15 && !this.routeEdges().has(E.id); })[0];
+    const tg = this.shuntTargets(t).filter((x) => { const E = this.lastEdgeOf(x); return !E.platform && E.len >= t.len + 15 && !this.routeEdges().has(E.id); })
+      .sort((a, b) => Number(!!this.lastEdgeOf(b).name?.startsWith("Abstell")) - Number(!!this.lastEdgeOf(a).name?.startsWith("Abstell")))[0];
     if (!tg || this.startShunt(t, tg)) return false;
     t.radio.push({ t: this.time, from: "tf", text: `${t.no}: Ich rangiere zum Abstellen nach ${tg.label}.` });
     return true;
@@ -861,7 +870,7 @@ export class World {
       if (q.entryPortal || q.turnedFrom || !q.stops.length) continue;
       const dep = q.stops[0].dep;
       if (dep - this.time > 1500) break;
-      if (this.trains.some((t) => t.bereit === q.key)) continue;
+      if (this.trains.some((t) => t.bereit === q.key) || this.time > dep + 900) continue;
       const st = q.stops[0].st;
       const t = this.trains.find((x) => x.parked && !x.bereit && !x.shunt && x.cat === q.cat && Math.abs(x.len - q.len) < 40 && this.stationOf(x) === st);
       if (!t) continue;
@@ -1383,12 +1392,12 @@ export class World {
     const label = (E: GEdge, m: number, d: Dir, rev: boolean) => {
       const M = g.nodes[m];
       const dead = (d > 0 ? M.east : M.west).length === 0;
-      return `${st0[1].name} ${E.platform ? `Gleis ${E.platform.track}` : dead ? "Stumpfgleis" : "Nebengleis"} (${d > 0 ? "Richtung Betzdorf" : "Richtung Köln"}${rev ? ", mit Sägefahrt" : ""})`;
+      return `${st0[1].name} ${E.platform ? `Gleis ${E.platform.track}` : E.name ? E.name : dead ? "Stumpfgleis" : "Nebengleis"} (${d > 0 ? "Richtung Betzdorf" : "Richtung Köln"}${rev ? ", mit Sägefahrt" : ""})`;
     };
     const parkable = (E: GEdge, m: number, d: Dir) => {
       const M = g.nodes[m];
       const dead = (d > 0 ? M.east : M.west).length === 0;
-      return (E.platform || !E.pref || dead) && E.len >= Math.min(t.len, 200);
+      return (E.platform || !E.pref || dead) && E.len >= Math.max(80, Math.min(t.len, 200));
     };
     // zweiter Teil einer Sägefahrt: von der Weiche aus in Gegenrichtung ins andere Gleis
     const walk2 = (n: number, d: Dir, path: number[], len: number, used: Set<number>, base: { dir: Dir; edges: number[]; node: number; after: number[]; len: number }) => {
@@ -1640,8 +1649,9 @@ export class World {
     const node = this.g.nodes[n];
     if (node.swSide === undefined) return "Keine Weiche";
     if (this.il.faultySwitches.has(n)) return `Weiche ${node.swName} ist gestört`;
-    if (this.il.switchLocked(n)) return `Weiche ${node.swName} ist verschlossen oder besetzt`;
+    if (this.il.switchLocked(n, true)) return `Weiche ${node.swName} ist verschlossen oder besetzt`;
     if (this.il.blockedSwitches.has(n)) return `Weiche ${node.swName} ist gesperrt (Sperre zuerst aufheben)`;
+    this.il.dropOverlaps(node.swSide! > 0 ? node.east : node.west);
     node.swPos = 1 - node.swPos;
     return null;
   }

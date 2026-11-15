@@ -86,15 +86,20 @@ export class Interlocking {
     return { sig: s.id, dir: s.dir, edges, endNode, endSig, endPortal, sw, len, diverging, vmax };
   }
 
-  switchLocked(n: number): boolean {
-    // Verschlossen, wenn ein Zweig der Weiche befahren, in einer Fahrstraße oder einem Durchrutschweg liegt
+  switchLocked(n: number, ignoreOverlap = false): boolean {
+    // Verschlossen, wenn ein Zweig der Weiche befahren oder in einer Fahrstraße liegt.
+    // Ein Durchrutschweg hält die Weiche nicht fest: wird sie gebraucht, wird er dort aufgegeben.
     const node = this.g.nodes[n];
     if (node.swSide === undefined) return false;
     for (const e of node.swSide > 0 ? node.east : node.west) {
       const E = this.g.edges[e];
-      if (E.lock || E.overlap || E.occ) return true;
+      if (E.lock || E.occ || (E.overlap && !ignoreOverlap)) return true;
     }
     return false;
+  }
+  // Durchrutschwege anderer Fahrstraßen auf diesen Kanten aufgeben
+  dropOverlaps(edges: Iterable<number>) {
+    for (const e of edges) { const id = this.g.edges[e].overlap; const r = id ? this.routes.get(id) : undefined; if (r) this.releaseOverlap(r); else if (id) this.g.edges[e].overlap = 0; }
   }
 
   overlapFor(p: PathDef): number[] {
@@ -120,18 +125,10 @@ export class Interlocking {
       if (E.occ) return "Fahrweg besetzt";
       if (E.az) return E.az === 1 ? "Fahrweg besetzt gemeldet (Achszähler gestört, erst Grundstellung)" : "Abschnitt nach Grundstellung nicht frei gemeldet: Zug mit Befehl (Räumungsprüfung) durchfahren lassen";
       if (E.lock) return "Fahrweg durch andere Fahrstraße belegt";
-      if (E.overlap) {
-        const r = this.routes.get(E.overlap);
-        if (!r || r.path.endSig !== p.sig) return "Durchrutschweg einer anderen Fahrstraße";
-      }
     }
     for (const { node, pos } of p.sw) {
       if (g.nodes[node].swPos !== pos && this.faultySwitches.has(node)) return `Weiche ${g.nodes[node].swName} gestört`;
-      if (g.nodes[node].swPos !== pos && this.switchLocked(node)) {
-        const br = (g.nodes[node].swSide! > 0 ? g.nodes[node].east : g.nodes[node].west).map((e) => g.edges[e]);
-        const onlyOv = br.every((E) => !E.lock && !E.occ);
-        return `Weiche ${g.nodes[node].swName} verschlossen${onlyOv ? " (Durchrutschweg, wird wenige Sekunden nach dem Halt des Zuges frei; die Fahrstraße wird vorgemerkt)" : ""}`;
-      }
+      if (g.nodes[node].swPos !== pos && this.switchLocked(node, true)) return `Weiche ${g.nodes[node].swName} verschlossen`;
       if (g.nodes[node].swPos !== pos && this.blockedSwitches.has(node)) return `Weiche ${g.nodes[node].swName} ist gesperrt`;
     }
     for (const e of this.overlapFor(p)) {
@@ -147,8 +144,10 @@ export class Interlocking {
     if (why) return why;
     const g = this.g;
     let moved = false;
+    this.dropOverlaps(p.edges);
     for (const { node, pos } of p.sw) {
       if (g.nodes[node].swPos !== pos) {
+        this.dropOverlaps(g.nodes[node].swSide! > 0 ? g.nodes[node].east : g.nodes[node].west);
         g.nodes[node].swPos = pos;
         moved = true;
       }

@@ -32,6 +32,7 @@ export interface GEdge {
   len: number; // Meter
   vmax: number; // km/h
   pref?: Dir; // Regelfahrrichtung (Rechtsfahrbetrieb)
+  name?: string; // Gleisname von Nebengleisen (z. B. Abstellgleis 4)
   platform?: Platform;
   occ: number; // Anzahl Züge im Abschnitt
   lock: number; // Fahrstraßen-ID oder 0
