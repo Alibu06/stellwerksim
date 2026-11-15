@@ -255,6 +255,11 @@ async function boot() {
       items.push({ label: t.hold ? "Halt aufheben (Funk)" : "Halt anordnen (Funk)", act: () => radio(w, t, t.hold ? "Weiterfahrt erlaubt" : "Sofort anhalten", t.hold ? "weiter" : "halt") });
       items.push({ label: "Anschluss abwarten", sub: [2, 3, 5, 8, 10].map((m) => ({ label: `${m} Minuten`, act: () => radio(w, t, `Warten Sie ${m} min auf den Anschluss`, "anschluss") })) });
       items.push({ label: "Verspätungsursache …", act: () => { tw.tab = "versp"; showTrain(t); } });
+      const noShunt = w.canShunt(t);
+      const targets = noShunt ? [] : w.shuntTargets(t);
+      items.push(noShunt || !targets.length
+        ? { label: `Rangieren${noShunt ? ` (${noShunt})` : " (kein freies Ziel)"}`, disabled: true }
+        : { label: "Rangieren nach …", sub: targets.map((x) => ({ label: x.label, act: () => { const why = w.startShunt(t, x); if (why) toast(why); } })) });
     } else if (h.kind === "edge") {
       const E = g.edges[h.edge];
       const a = g.nodes[E.a];

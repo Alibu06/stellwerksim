@@ -48,7 +48,9 @@ export interface Train {
   reason?: string; // vom Fahrdienstleiter eingetragene Verspätungsursache
   reasonNote?: string;
   extraDwell: number; // Anschluss abwarten (Sekunden, beim nächsten Halt)
-  holdFor?: { st: string; sec: number }; // Anschluss abwarten an bestimmtem Bahnhof (Disposition)
+  holdFor?: { st: string; sec: number };
+  shunt?: { edges: number[]; label: string }; // laufende Rangierfahrt
+  shunted?: boolean; // Anschluss abwarten an bestimmtem Bahnhof (Disposition)
   driver: string; // Name Triebfahrzeugführer/in
   tfz: string; // Baureihe
   radio: { t: number; from: "fdl" | "tf"; text: string }[];
@@ -373,6 +375,7 @@ export class World {
 
   private drive(t: Train, dt: number) {
     if (t.gone) return;
+    if (t.shunt) return this.shuntDrive(t, dt);
     if (t.dwelling) {
       this.dwell(t);
       if (t.gone) return;
@@ -445,7 +448,7 @@ export class World {
         node.swPos = side.indexOf(head.id);
         this.incident(`${t.no} hat Weiche ${node.swName} aufgefahren!`);
       }
-      const sid = t.dir > 0 ? node.sigE : node.sigW;
+      const sid = t.shunt ? 0 : t.dir > 0 ? node.sigE : node.sigW;
       if (sid) {
         const sg = this.il.sig(sid);
         if (!this.il.proceeds(sg, this.time)) {
@@ -548,7 +551,7 @@ export class World {
     const isLast = t.stopIdx === t.stops.length - 1 && !t.trip.exitPortal;
     if (isLast) {
       if (t.trip.turnInto) t.reverseAt = t.trip.turnInto.dir === t.dir ? this.time + 20 : Math.max(this.time + 240, t.trip.turnInto.stops[0].dep - 120);
-      else t.dissolveAt = this.time + 180;
+      else t.dissolveAt = this.time + (this.manualAreas.has(s.st) ? 600 : 180);
     }
   }
 
@@ -577,6 +580,132 @@ export class World {
     t.dwelling = false;
   }
 
+  private tailPos(t: Train) {
+    const g = this.g;
+    const first = g.edges[t.body[0]];
+    if (t.body.length === 1) return t.headPos - t.len;
+    let rem = t.len - t.headPos;
+    for (let i = 1; i < t.body.length - 1; i++) rem -= g.edges[t.body[i]].len;
+    return first.len - rem;
+  }
+
+  private flip(t: Train, firstLen = this.g.edges[t.body[0]].len, tailPos = this.tailPos(t)) {
+    this.il.releaseTrain(t.id);
+    t.body.reverse();
+    t.headPos = firstLen - Math.max(0, tailPos);
+    t.dir = (t.dir * -1) as Dir;
+  }
+
+  // ---------------- Rangieren ----------------
+  canShunt(t: Train): string | null {
+    if (t.shunt) return "Rangierfahrt läuft bereits";
+    if (t.v > 0.1) return "Zug muss stehen";
+    if (t.trip.turnInto) return "Zug wendet planmäßig und bleibt am Bahnsteig";
+    const last = t.stopIdx === t.stops.length - 1 && !t.trip.exitPortal && t.dwelling;
+    if (!last && t.cat !== "G") return "Nur Züge, die hier enden, können rangiert werden";
+    if (t.cat === "G" && !t.dwelling && t.waitRed < 30 && !last) return "Güterzug muss vor einem Signal stehen";
+    return null;
+  }
+
+  shuntTargets(t: Train): { label: string; dir: Dir; edges: number[] }[] {
+    const g = this.g, out: { label: string; dir: Dir; edges: number[]; len: number }[] = [];
+    const own = new Set(t.body);
+    // nur innerhalb des Bahnhofs, in dem der Zug steht
+    const hs = this.headS(t);
+    const st0 = Object.entries(g.stations).sort((a, b) => Math.abs((a[1].s ?? 0) - hs) - Math.abs((b[1].s ?? 0) - hs))[0];
+    const s0 = st0[1].s ?? 0;
+    const inArea = (e: number) => Math.abs(((g.nodes[g.edges[e].a].s ?? 0) + (g.nodes[g.edges[e].b].s ?? 0)) / 2 - s0) < 1300;
+    for (const d of [t.dir, (t.dir * -1) as Dir]) {
+      const startEdge = d === t.dir ? t.body[t.body.length - 1] : t.body[0];
+      const E0 = g.edges[startEdge];
+      const start = d > 0 ? E0.b : E0.a;
+      const walk = (n: number, path: number[], len: number) => {
+        if (len > 1800 || path.length > 25) return;
+        const node = g.nodes[n];
+        const sid = node.sigE || node.sigW;
+        if (path.length && (node.portal || (sid && this.il.sig(sid).kind === "block"))) return;
+        for (const e of d > 0 ? node.east : node.west) {
+          const E = g.edges[e];
+          if (own.has(e) || E.occ || E.lock || E.overlap || E.closed || !inArea(e)) continue;
+          const m = d > 0 ? E.b : E.a;
+          const np = [...path, e];
+          const parkable = (E.platform || !E.pref) && E.len >= Math.min(t.len, 200);
+          if (parkable) {
+            const M = g.nodes[m];
+            const dead = (d > 0 ? M.east : M.west).length === 0;
+            const st = st0[1].name;
+            const label = `${st} ${E.platform ? `Gleis ${E.platform.track}` : dead ? "Stumpfgleis" : "Nebengleis"} (${d > 0 ? "Richtung Betzdorf" : "Richtung Köln"})`;
+            out.push({ label, dir: d, edges: np, len: len + E.len });
+          }
+          walk(m, np, len + E.len);
+        }
+      };
+      walk(start, [], 0);
+    }
+    // je Ziel nur der kürzeste Weg
+    const best = new Map<string, { label: string; dir: Dir; edges: number[]; len: number }>();
+    for (const o of out) if (!best.has(o.label) || best.get(o.label)!.len > o.len) best.set(o.label, o);
+    return [...best.values()].sort((a, b) => a.len - b.len).slice(0, 10);
+  }
+
+  startShunt(t: Train, target: { label: string; dir: Dir; edges: number[] }): string | null {
+    const why = this.canShunt(t);
+    if (why) return why;
+    const g = this.g;
+    for (const e of target.edges) if (g.edges[e].occ || g.edges[e].lock || g.edges[e].closed) return "Fahrweg nicht mehr frei";
+    // Weichen umstellen
+    if (target.dir !== t.dir) this.flip(t);
+    let prev = t.body[t.body.length - 1];
+    const sw: [number, number][] = [];
+    for (const e of target.edges) {
+      const n = this.exitNode(t, prev);
+      const node = g.nodes[n];
+      if (node.swSide !== undefined) {
+        const side = node.swSide > 0 ? node.east : node.west;
+        const want = side.indexOf(node.swSide === t.dir ? e : prev);
+        if (want >= 0 && want !== node.swPos) {
+          if (this.il.faultySwitches.has(n)) return `Weiche ${node.swName} ist gestört`;
+          if (this.il.blockedSwitches.has(n)) return `Weiche ${node.swName} ist gesperrt`;
+          if (side.some((x) => x !== e && x !== prev && (g.edges[x].occ || g.edges[x].lock || g.edges[x].overlap))) return `Weiche ${node.swName} ist verschlossen`;
+          sw.push([n, want]);
+        }
+      }
+      prev = e;
+    }
+    for (const [n, pos] of sw) this.g.nodes[n].swPos = pos;
+    for (const e of target.edges) g.edges[e].lock = -t.id;
+    t.shunt = { edges: [t.body[t.body.length - 1], ...target.edges], label: target.label };
+    t.dwelling = false;
+    this.log(`Rangierfahrt ${t.no} nach ${target.label}`, "info");
+    return null;
+  }
+
+  private shuntDrive(t: Train, dt: number) {
+    const g = this.g, sh = t.shunt!;
+    const head = this.headEdge(t);
+    const idx = sh.edges.indexOf(head.id);
+    let rem = head.len - t.headPos;
+    for (let i = idx + 1; i < sh.edges.length; i++) rem += g.edges[sh.edges[i]].len;
+    rem -= 10;
+    if (rem <= 0.3) {
+      t.v = 0;
+      for (const e of g.edges) if (e.lock === -t.id) e.lock = 0;
+      t.shunt = undefined;
+      t.shunted = true;
+      t.dwelling = true;
+      t.dissolveAt = this.time + 120;
+      this.log(`${t.no} steht in ${sh.label} und wird abgestellt`, "good");
+      return;
+    }
+    const allowed = Math.min(25 / 3.6, Math.sqrt(2 * t.dec * rem));
+    if (t.v < allowed) t.v = Math.min(allowed, t.v + t.acc * dt);
+    else t.v = Math.max(allowed, t.v - t.dec * 1.6 * dt);
+    const s = Math.max(0, Math.min(t.v * dt, rem));
+    if (s < 0.001) { t.v = Math.max(t.v, 0.5); return; }
+    this.move(t, s);
+    for (const e of g.edges) if (e.lock === -t.id && !e.occ && !sh.edges.slice(sh.edges.indexOf(this.headEdge(t).id)).includes(e.id)) e.lock = 0;
+  }
+
   private reverse(t: Train, next: TripSpec) {
     const g = this.g;
     // Position des Zugschlusses in der hintersten Kante bestimmen
@@ -589,12 +718,7 @@ export class World {
       tailPos = first.len - rem;
     }
     const flip = next.dir !== t.dir;
-    if (flip) {
-      this.il.releaseTrain(t.id);
-      t.body.reverse();
-      t.headPos = first.len - Math.max(0, tailPos);
-      t.dir = (t.dir * -1) as Dir;
-    }
+    if (flip) this.flip(t, first.len, tailPos);
     t.trip = next;
     t.no = next.no;
     t.stops = next.stops.map((s) => ({ ...s, done: false, plan: this.planTrack(s.st, next.dir, next.line, next.to) }));
