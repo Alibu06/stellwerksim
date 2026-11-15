@@ -96,3 +96,6 @@ html.light #orderDlg select { background: #e6ecf3; color: #141414; }
 html.light #orderDlg .odb button { background: #a7d5b9; border: 1px solid #24a55f; color: #141414; }
 html.light #orderDlg .odb button.ghost { background: #d7dfe9; }
 html.light #tab-faults .book div { border-bottom: 1px solid #d7dfe9; }
+html.light #card table.plan tr.turnrow td { color: #c59700; border-top: 1px dashed #b0bbca; }
+html.light #card table.plan tr.nextrip td { color: #8796a8; }
+html.light #card table.plan small.op { color: #045eff; }

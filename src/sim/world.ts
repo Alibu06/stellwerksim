@@ -60,6 +60,14 @@ export interface Train {
   waitFor?: { st: string; train: number; since?: number; no?: string }; // Überholung abwarten
   shunt?: { edges: number[]; label: string; rev?: ShuntTarget["rev"] }; // laufende Rangierfahrt
   shunted?: boolean; // Anschluss abwarten an bestimmtem Bahnhof (Disposition)
+  parked?: boolean; // abgestellt (Nebengleis), wartet auf neue Leistung
+  bereit?: number; // Fahrt, für die dieser abgestellte Zug bereitgestellt wird
+  couple?: number; // abgestellte Einheit: kuppelt an diesen Zug
+  waitCouple?: { unit?: number; until: number }; // Zug wartet auf Verstärkung
+  splitAt?: number; // Zeitpunkt zum Abhängen der hinteren Einheit
+  rescue?: number; // Hilfslok: soll diesen liegengebliebenen Zug abschleppen
+  towed?: boolean; // wird von der Hilfslok geschleppt
+  waitBus?: number; // wartet auf diesen SEV-Bus
   driver: string; // Name Triebfahrzeugführer/in
   tfz: string; // Baureihe
   radio: { t: number; from: "fdl" | "tf"; text: string }[];
@@ -156,6 +164,7 @@ export class World {
     this.pending = trips.filter((t) => !t.turnedFrom && t.entryTime + t.initialDelay >= startTime - 60);
     this.buildUmlauf(trips);
     this.ops.start(trips);
+    this.planCoupling(trips);
   }
 
   // ---------------- Umläufe außerhalb des Bereichs ----------------
@@ -235,6 +244,8 @@ export class World {
     }
     if (this.orders.length || this.pendingRadio.length) this.ordersTick();
     if (this.orderSw.length) this.releaseOrderSw();
+    this.depotTimer += dt;
+    if (this.depotTimer >= 10) { this.depotTimer = 0; this.depotTick(); this.couplingTick(); this.rescueTick(); this.routeJanitor(); this.jamResolver(); }
     this.zlTimer += dt;
     if (this.zlTimer >= 2) {
       this.zlTimer = 0;
@@ -245,18 +256,22 @@ export class World {
 
   // ---------------- Züge einsetzen ----------------
   private spawn() {
-    while (this.pending.length && this.pending[0].entryTime + this.pending[0].initialDelay <= this.time) {
-      const trip = this.pending[0];
+    if (!this.pending.length || this.pending[0].entryTime + this.pending[0].initialDelay > this.time) return;
+    const assigned = new Set(this.trains.filter((t) => t.bereit).map((t) => t.bereit));
+    const due = this.pending.filter((q) => q.entryTime + q.initialDelay <= this.time);
+    let resort = false;
+    for (const trip of due) {
+      if (assigned.has(trip.key)) continue; // wird aus der Abstellung bereitgestellt
       const ok = trip.entryPortal ? this.spawnAtPortal(trip) : this.spawnAtPlatform(trip);
       if (!ok) {
         // Einbruch nicht möglich (Gleis belegt): später erneut versuchen
         trip.initialDelay += 20;
-        this.pending.sort((a, b) => a.entryTime + a.initialDelay - (b.entryTime + b.initialDelay));
-        if (this.pending[0] === trip) break;
+        resort = true;
         continue;
       }
-      this.pending.shift();
+      this.pending.splice(this.pending.indexOf(trip), 1);
     }
+    if (resort) this.pending.sort((a, b) => a.entryTime + a.initialDelay - (b.entryTime + b.initialDelay));
   }
 
   private newTrain(trip: TripSpec, body: number[], headPos: number): Train {
@@ -305,6 +320,11 @@ export class World {
     if (cost(e) >= 1e8 || (cands.length && cost(e) > 1.5 * this.bestPlatformCost(st, trip) + 800)) return false;
     const t = this.newTrain(trip, [e.id], e.len - 15);
     this.arrive(t, true);
+    if (!trip.turnedFrom) {
+      const probe = trip.cat === "G" ? 600 : 180;
+      t.dwellUntil = Math.max(t.dwellUntil, this.time + probe);
+      this.brakeTest(t, probe);
+    }
     return true;
   }
 
@@ -647,6 +667,13 @@ export class World {
     if (!startHere) t.delay = Math.max(0, this.time - s.arr);
     const minDwell = t.cat === "ICE" ? 90 : t.cat === "G" ? 0 : 30;
     t.dwellUntil = Math.max(this.time + minDwell + (t.cat !== "G" && this.ext.f.weather ? this.ext.weather.dwell : 0), s.dep);
+    // Fahrgastwechsel: in der Hauptverkehrszeit und an großen Bahnhöfen dauert er länger
+    if (!startHere && t.cat !== "G" && t.stopIdx < t.stops.length - 1) {
+      const pax = this.paxDwell(s.st);
+      const before = t.dwellUntil;
+      t.dwellUntil = Math.max(t.dwellUntil, this.time + minDwell + pax);
+      if (t.dwellUntil > before) this.cause(t, "Fahrgastwechsel (viele Reisende)", t.dwellUntil - before);
+    }
     if (!startHere && t.cat !== "G" && this.rand() < 0.02 * this.faultRate) {
       const extra = 120 + Math.floor(this.rand() * 300);
       t.dwellUntil += extra;
@@ -663,6 +690,8 @@ export class World {
       this.cause(t, "Anschluss abgewartet (Disposition)", Math.max(0, t.dwellUntil - Math.max(this.time + minDwell, s.dep)));
       t.extraDwell = 0;
     }
+    if (!startHere && s.op === "trennen") { t.splitAt = this.time + 90; t.dwellUntil = Math.max(t.dwellUntil, this.time + 210); }
+    if (!startHere && s.op === "kuppeln") this.requestCoupling(t, s.st);
     const isLast = t.stopIdx === t.stops.length - 1 && !t.trip.exitPortal;
     if (isLast) {
       if (t.trip.turnInto) t.reverseAt = t.trip.turnInto.dir === t.dir ? this.time + 20 : Math.max(this.time + 240, t.trip.turnInto.stops[0].dep - 120);
@@ -680,7 +709,9 @@ export class World {
       }
       if (s.actArr !== undefined && this.time - s.actArr > 30) this.il.releaseOverlapForTrain(t.id);
       if (t.trip.turnInto && this.time >= t.reverseAt) this.reverse(t, t.trip.turnInto);
+      else if (!t.trip.turnInto && (t.parked || t.bereit || t.rescue)) return;
       else if (!t.trip.turnInto && this.time >= t.dissolveAt) {
+        if (this.parkAuto(t)) return;
         for (const e of t.body) this.vacate(e);
         t.body = [];
         this.il.releaseTrain(t.id);
@@ -691,6 +722,7 @@ export class World {
     // Durchrutschweg hinter dem Bahnsteig nach 30 s Stillstand auflösen, damit die Weichen dahinter frei werden
     if (s.actArr !== undefined && this.time - s.actArr > 30) this.il.releaseOverlapForTrain(t.id);
     if (this.time < t.dwellUntil || t.hold) return;
+    if (t.waitBus && this.ops.busHolds(t)) return;
     if (t.waitFor && t.waitFor.st === s.st) {
       const o = this.trains.find((x) => x.id === t.waitFor!.train);
       const sS = this.g.stations[s.st].s ?? 0;
@@ -727,6 +759,472 @@ export class World {
     t.body.reverse();
     t.headPos = firstLen - Math.max(0, tailPos);
     t.dir = (t.dir * -1) as Dir;
+  }
+
+  // ---------------- Abstellung und Bereitstellung ----------------
+  // Endende Züge fahren auf ein Nebengleis; Fahrten, die im Bereich beginnen, werden von dort an den Bahnsteig gebracht
+  private stationOf(t: Train): string {
+    const hs = this.headS(t);
+    return Object.entries(this.g.stations).sort((a, b) => Math.abs((a[1].s ?? 0) - hs) - Math.abs((b[1].s ?? 0) - hs))[0][0];
+  }
+  private lastEdgeOf(x: ShuntTarget) { const l = x.rev?.edges ?? x.edges; return this.g.edges[l[l.length - 1]]; }
+  private parkAuto(t: Train): boolean {
+    if (this.canShunt(t)) return false;
+    const tg = this.shuntTargets(t).filter((x) => { const E = this.lastEdgeOf(x); return !E.platform && E.len >= t.len + 15 && !this.routeEdges().has(E.id); })[0];
+    if (!tg || this.startShunt(t, tg)) return false;
+    t.radio.push({ t: this.time, from: "tf", text: `${t.no}: Ich rangiere zum Abstellen nach ${tg.label}.` });
+    return true;
+  }
+  // Kanten, über die irgendeine Fahrstraße führt (dort darf nichts abgestellt werden)
+  private routeEdgeSet?: Set<number>;
+  routeEdges(): Set<number> {
+    if (!this.routeEdgeSet) {
+      this.routeEdgeSet = new Set();
+      for (const ps of this.il.paths.values()) for (const p of ps) { for (const e of p.edges) this.routeEdgeSet.add(e); for (const e of this.il.overlapFor(p)) this.routeEdgeSet.add(e); }
+    }
+    return this.routeEdgeSet;
+  }
+  private depotTimer = 0;
+  private depotTick() {
+    const P = this.pending;
+    for (const q of P) {
+      if (q.entryPortal || q.turnedFrom || !q.stops.length) continue;
+      const dep = q.stops[0].dep;
+      if (dep - this.time > 1500) break;
+      if (this.trains.some((t) => t.bereit === q.key)) continue;
+      const st = q.stops[0].st;
+      const t = this.trains.find((x) => x.parked && !x.bereit && !x.shunt && x.cat === q.cat && Math.abs(x.len - q.len) < 40 && this.stationOf(x) === st);
+      if (!t) continue;
+      t.bereit = q.key;
+      this.log(`Bereitstellung: ${q.no} (ab ${String(Math.floor((dep % 86400) / 3600)).padStart(2, "0")}:${String(Math.floor(dep / 60) % 60).padStart(2, "0")}) kommt aus der Abstellung in ${this.g.stations[st].name}${this.manualAreas.has(st) ? ". Bitte rechtzeitig an den Bahnsteig rangieren (Rechtsklick auf den Zug)" : ""}`, "info");
+    }
+    for (const t of this.trains) {
+      if (!t.bereit || t.shunt) continue;
+      const q = P.find((x) => x.key === t.bereit);
+      if (!q) { t.bereit = undefined; continue; }
+      const st = q.stops[0].st, dep = q.stops[0].dep;
+      if (this.time > dep + 1200) { t.bereit = undefined; continue; } // klappt nicht: Ersatzgarnitur aus dem Werk
+      const pl = this.headEdge(t).platform;
+      if (pl && pl.st === st && this.time >= dep - 900) { this.takeOver(t, q); continue; }
+      // in Bereichen ohne Spieler (oder kurz vor Abfahrt) rangiert der Tf selbst
+      if (this.time < dep - 600 || (this.manualAreas.has(st) && this.time < dep - 240)) continue;
+      const want = this.planTrack(st, q.dir, q.line, q.to);
+      const tg = this.shuntTargets(t).filter((x) => { const E = this.lastEdgeOf(x); return E.platform?.st === st && E.len >= t.len; })
+        .sort((a, b) => Number(this.lastEdgeOf(b).platform!.track === want) - Number(this.lastEdgeOf(a).platform!.track === want))[0];
+      if (tg && !this.startShunt(t, tg)) { t.parked = false; t.radio.push({ t: this.time, from: "tf", text: `${q.no}: Ich setze zur Bereitstellung nach ${tg.label} um.` }); }
+    }
+  }
+  // Abgestellten Zug als neue Fahrt übernehmen (mit Bremsprobe)
+  private takeOver(t: Train, q: TripSpec) {
+    if (q.dir !== t.dir) this.flip(t);
+    t.trip = q; t.no = q.no;
+    t.stops = q.stops.map((s) => ({ ...s, done: false, plan: this.planTrack(s.st, q.dir, q.line, q.to) }));
+    for (const st of t.stops) st.disp = this.dispTrack.get(`${q.key}|${st.st}`);
+    t.stops[0].track = this.headEdge(t).platform?.track;
+    t.stops[0].actArr = this.time;
+    t.stopIdx = 0; t.dwelling = true; t.parked = false; t.bereit = undefined; t.shunted = false;
+    t.dissolveAt = 0; t.reverseAt = 0; t.causes = {}; t.sev = undefined;
+    const probe = q.cat === "G" ? 600 : 180;
+    t.dwellUntil = Math.max(this.time + probe, q.stops[0].dep);
+    t.delayIn = Math.max(0, t.dwellUntil - q.stops[0].dep); t.delay = t.delayIn;
+    if (t.delayIn > 60) t.causes["Bereitstellung verspätet"] = t.delayIn;
+    this.pending = this.pending.filter((x) => x !== q);
+    this.ext.applyPerf(t);
+    this.brakeTest(t, probe);
+    this.log(`${q.no} steht in ${this.g.stations[q.stops[0].st].name} Gleis ${t.stops[0].track ?? "?"} bereit`, "info");
+  }
+  // Bremsprobe: voll bei Güterzügen, vereinfacht bei Triebzügen
+  brakeTest(t: Train, sec: number) {
+    t.radio.push({ t: this.time, from: "tf", text: `${t.no}: ${t.cat === "G" ? "Wagenprüfung und volle Bremsprobe laufen" : "Vereinfachte Bremsprobe läuft"}, dauert etwa ${Math.round(sec / 60)} Minuten.` });
+    this.pendingRadio.push({ at: this.time + sec, train: t.id, text: `${t.no}: Bremsprobe in Ordnung, Zug ist abfahrbereit.` });
+  }
+
+  // ---------------- Kuppeln und Trennen (Verstärkung in der Hauptverkehrszeit) ----------------
+  private planCoupling(trips: TripSpec[]) {
+    const hAt = (t: TripSpec, st: string) => { const x = t.stops.find((s) => s.st === st); return x ? x.dep / 3600 : -1; };
+    // morgens nach Köln: in Au (Sieg) zweite Einheit beistellen; abends aus Köln: in Au (Sieg) hintere Einheit abhängen
+    const morning = trips.filter((t) => t.line === "RE9" && t.dir < 0 && hAt(t, "AU") >= 5.6 && hAt(t, "AU") < 8.2).slice(0, 2);
+    const evening = trips.filter((t) => t.line === "RE9" && t.dir > 0 && hAt(t, "AU") >= 16 && hAt(t, "AU") < 19.5 && t.stops.findIndex((s) => s.st === "AU") < t.stops.length - 1).slice(0, 2);
+    for (const t of morning) { const s = t.stops.find((x) => x.st === "AU")!; s.op = "kuppeln"; s.dep = Math.max(s.dep, s.arr + 240); }
+    for (const t of evening) { const s = t.stops.find((x) => x.st === "AU")!; s.op = "trennen"; s.dep = Math.max(s.dep, s.arr + 180); t.len += 75; }
+    this.couplingTrips = morning.map((t) => t.key);
+  }
+  private couplingTrips: number[] = [];
+  private poolDone = false;
+  // abgestellte Einheit (ohne eigene Fahrt), z. B. nach dem Abhängen oder als Verstärkung im Abstellgleis
+  private unitTrip(base: TripSpec, st: string, len: number): TripSpec {
+    return { ...base, key: this.ops.specialKey++, no: `Einheit ${base.line}`, len, special: "Einheit", entryPortal: undefined, exitPortal: undefined, turnInto: undefined, turnedFrom: undefined,
+      initialDelay: 0, stops: [{ st, arr: this.time, dep: this.time }], from: this.g.stations[st].name, to: this.g.stations[st].name };
+  }
+  private initPool() {
+    this.poolDone = true;
+    let k = 0;
+    // alle Einheiten hintereinander in ein Stumpfgleis (Ende ohne Anschluss), damit keine der anderen den Weg versperrt
+    const g = this.g;
+    const stubEnd = (E: typeof g.edges[number]) => [E.a, E.b].some((n) => g.nodes[n].east.length + g.nodes[n].west.length === 1);
+    for (const key of this.couplingTrips) {
+      const q = this.pending.find((x) => x.key === key);
+      if (!q) continue;
+      const sid = g.edges.find((E) => !E.platform && !E.lock && stubEnd(E) && E.len >= 80 + k * 90 && !this.routeEdges().has(E.id) && Math.abs(((g.nodes[E.a].s ?? 0) + (g.nodes[E.b].s ?? 0)) / 2 - (g.stations.AU.s ?? 0)) < 900)
+        ?? g.edges.find((E) => !E.platform && !E.occ && !E.lock && E.len >= 80 && !this.routeEdges().has(E.id) && Math.abs(((g.nodes[E.a].s ?? 0) + (g.nodes[E.b].s ?? 0)) / 2 - (g.stations.AU.s ?? 0)) < 900);
+      if (!sid) continue;
+      const u = this.newTrain(this.unitTrip(q, "AU", 75), [sid.id], sid.len - 10 - (sid.occ ? 0 : 0) - k++ * 90);
+      u.dwelling = true; u.stops[0].done = true; u.parked = true; u.dissolveAt = 1e12;
+    }
+  }
+  private requestCoupling(t: Train, st: string) {
+    const us = this.trains.filter((x) => x.parked && !x.bereit && !x.couple && !x.shunt && x.trip.special === "Einheit" && x.cat === t.cat && this.stationOf(x) === st);
+    const u = us.find((x) => this.coupleTarget(x, t)) ?? us[0];
+    if (!u) { this.log(`${t.no}: Keine Verstärkungseinheit in ${this.g.stations[st].name}, Zug fährt kurz`, "warn"); return; }
+    u.couple = t.id;
+    t.waitCouple = { unit: u.id, until: this.time + 600 };
+    t.dwellUntil = Math.max(t.dwellUntil, this.time + 240);
+    t.radio.push({ t: this.time, from: "tf", text: `${t.no}: Stehe in ${this.g.stations[st].name}, warte auf die Verstärkung zum Kuppeln.` });
+  }
+  // Ziel für die Kuppelfahrt: Weg bis an den Zug heran
+  private coupleTarget(u: Train, o: Train, maxLen = 1500): ShuntTarget | undefined {
+    const g = this.g;
+    const ok = (e: number, used: Set<number>) => !used.has(e) && !u.body.includes(e) && !g.edges[e].occ && !g.edges[e].lock && !g.edges[e].closed;
+    // vom Knoten n in Richtung d bis an den Zug o (Breitensuche, höchstens 1,5 km)
+    const reach = (n0: number, d: Dir, used: Set<number>, first?: number): number[] | undefined => {
+      const queue: { n: number; path: number[]; len: number }[] = [{ n: n0, path: [], len: 0 }];
+      const seen = new Set<number>([n0]);
+      while (queue.length) {
+        const c = queue.shift()!;
+        if (c.len > maxLen || c.path.length > 20 + maxLen / 150) continue;
+        const node = g.nodes[c.n];
+        for (const e of d > 0 ? node.east : node.west) {
+          if (!c.path.length && first !== undefined && e === first) continue;
+          if (o.body.includes(e)) return [...c.path, e];
+          if (!ok(e, used) || c.path.includes(e)) continue;
+          const nn = d > 0 ? g.edges[e].b : g.edges[e].a;
+          if (maxLen > 1500 && seen.has(nn)) continue;
+          seen.add(nn);
+          queue.push({ n: d > 0 ? g.edges[e].b : g.edges[e].a, path: [...c.path, e], len: c.len + g.edges[e].len });
+        }
+      }
+      return undefined;
+    };
+    for (const d of [u.dir, (u.dir * -1) as Dir]) {
+      const E0 = g.edges[d === u.dir ? u.body[u.body.length - 1] : u.body[0]];
+      const start = d > 0 ? E0.b : E0.a;
+      const direct = reach(start, d, new Set());
+      if (direct) return { label: `an ${o.no}`, dir: d, edges: direct };
+      // mit Sägefahrt: über eine Weiche hinaus vorziehen, dann auf dem anderen Ast zurück
+      const fwd: { n: number; path: number[]; len: number; sw: { node: number; idx: number; dist: number; came: number }[] }[] = [{ n: start, path: [], len: 0, sw: [] }];
+      const fseen = new Set<number>([start]);
+      while (fwd.length) {
+        const c = fwd.shift()!;
+        if (c.len > maxLen || c.path.length > 25 + maxLen / 150) continue;
+        const node = g.nodes[c.n];
+        const back = d > 0 ? node.west : node.east;
+        const sw = back.length === 2 && c.path.length ? [...c.sw, { node: c.n, idx: c.path.length, dist: c.len, came: c.path[c.path.length - 1] }] : c.sw;
+        for (const x of sw) {
+          if (c.len - x.dist < u.len + 25) continue;
+          const other = (d > 0 ? g.nodes[x.node].west : g.nodes[x.node].east).find((e) => e !== x.came);
+          if (other === undefined) continue;
+          const backPath = reach(x.node, (d * -1) as Dir, new Set(c.path), x.came);
+          if (backPath) return { label: `an ${o.no}`, dir: d, edges: c.path, rev: { node: x.node, after: c.path.slice(x.idx), edges: backPath } };
+        }
+        for (const e of d > 0 ? node.east : node.west) {
+          if (!ok(e, new Set(c.path))) continue;
+          const nn = d > 0 ? g.edges[e].b : g.edges[e].a;
+          if (maxLen > 1500 && fseen.has(nn)) continue;
+          fseen.add(nn);
+          fwd.push({ n: d > 0 ? g.edges[e].b : g.edges[e].a, path: [...c.path, e], len: c.len + g.edges[e].len, sw });
+        }
+      }
+    }
+    return undefined;
+  }
+  private couplingTick() {
+    if (!this.poolDone) this.initPool();
+    for (const t of this.trains) {
+      if (t.splitAt && this.time >= t.splitAt) { t.splitAt = undefined; this.splitRear(t, 75); }
+      if (t.waitCouple && this.time > t.waitCouple.until) {
+        const u = this.trains.find((x) => x.id === t.waitCouple!.unit);
+        if (u) { u.couple = undefined; if (u.shunt) u.shunt = { edges: [u.body[u.body.length - 1]], label: "Abbruch" }; }
+        t.waitCouple = undefined;
+        this.log(`${t.no}: Kuppeln in ${this.g.stations[this.stationOf(t)].name} hat nicht geklappt, Zug fährt kurz`, "warn");
+      } else if (t.waitCouple) t.dwellUntil = Math.max(t.dwellUntil, this.time + 60);
+      if (t.couple && !t.shunt) {
+        const o = this.trains.find((x) => x.id === t.couple);
+        if (!o || !o.dwelling) continue;
+        const tg = this.coupleTarget(t, o);
+        if (!tg) continue;
+        if (tg.dir !== t.dir) this.flip(t);
+        const err = this.setShuntSwitches(t, tg.edges);
+        if (err) { if (tg.dir !== t.dir) this.flip(t); continue; }
+        for (const e of [...tg.edges, ...(tg.rev?.edges ?? [])]) if (!o.body.includes(e)) this.g.edges[e].lock = -t.id;
+        t.shunt = { edges: [t.body[t.body.length - 1], ...tg.edges], label: tg.label, rev: tg.rev };
+        t.dwelling = false; t.parked = false;
+        t.radio.push({ t: this.time, from: "tf", text: `Einheit fährt zum Kuppeln an ${o.no}.` });
+      }
+    }
+  }
+  private doCouple(u: Train, o: Train) {
+    const g = this.g;
+    u.v = 0;
+    for (const e of g.edges) if (e.lock === -u.id) e.lock = 0;
+    let body: number[];
+    if (u.dir === o.dir) {
+      body = [...u.body, ...o.body.filter((e, i) => !(i === 0 && u.body[u.body.length - 1] === e))];
+    } else {
+      const rev = [...u.body].reverse();
+      body = [...o.body, ...rev.filter((e, i) => !(i === 0 && o.body[o.body.length - 1] === e))];
+      const tail = this.tailPos(u);
+      o.headPos = g.edges[rev[rev.length - 1]].len - Math.max(0, tail);
+    }
+    for (const e of u.body) g.edges[e].occ--;
+    for (const e of new Set(body)) if (!o.body.includes(e)) g.edges[e].occ++;
+    o.body = body;
+    o.len += u.len;
+    u.body = []; u.gone = true; u.shunt = undefined;
+    this.il.releaseTrain(u.id);
+    o.waitCouple = undefined;
+    if (u.rescue) { this.rescueCoupled(u, o); return; }
+    o.dwellUntil = Math.max(o.dwellUntil, this.time + 120);
+    this.brakeTest(o, 120);
+    this.log(`${o.no}: Verstärkung in ${this.g.stations[this.stationOf(o)].name} gekuppelt, Zug fährt jetzt mit ${Math.round(o.len)} m`, "info");
+  }
+  // hintere Einheit abhängen: bleibt am Bahnsteig stehen und wird danach abgestellt
+  private splitRear(t: Train, len: number) {
+    const g = this.g;
+    if (t.len - len < 40) return;
+    let pos = this.tailPos(t) + len; // Spitze der abgehängten Einheit, gemessen ab der Einfahrseite der Schlusskante
+    const ub: number[] = [];
+    let i = 0;
+    while (i < t.body.length) {
+      const E = g.edges[t.body[i]];
+      ub.push(t.body[i]);
+      if (pos <= E.len) break;
+      pos -= E.len;
+      i++;
+    }
+    const st = this.stationOf(t);
+    for (const e of ub) g.edges[e].occ++; // newTrain zählt auch, deshalb hier vorher abziehen
+    for (const e of ub) g.edges[e].occ--;
+    const unit = this.newTrain(this.unitTrip(t.trip, st, len), ub, pos - 1);
+    unit.dwelling = true; unit.stops[0].done = true; unit.dissolveAt = this.time + 300;
+    // vorderer Teil: Kanten, die nur noch die Einheit belegt, abgeben
+    const keepFrom = i;
+    for (let k = 0; k < keepFrom; k++) g.edges[t.body[k]].occ--;
+    t.body = t.body.slice(keepFrom);
+    t.len -= len;
+    this.brakeTest(t, 90);
+    this.log(`${t.no}: hintere Einheit in ${this.g.stations[st].name} abgehängt, sie wird abgestellt`, "info");
+  }
+
+  // Verwaiste Fahrstraßen auflösen: kein Zug fährt mehr darauf zu (z. B. nach Wenden, Ausfall oder Abstellen)
+  // Verklemmung in einem Bereich, den der Spieler nicht stellt: Die Netzleitstelle nimmt den am längsten wartenden Zug
+  // heraus (Teilausfall), damit der Betrieb weiterläuft. Bereiche des Spielers bleiben unangetastet.
+  private jamCool = 0;
+  private jamResolver() {
+    if (this.time < this.jamCool) return;
+    const cand = this.trains.filter((t) => !t.gone && t.body.length && t.waitRed > 2400 && t.nextSig && this.il.sig(t.nextSig).auto
+      && !t.fault && !t.rescue && !t.towed && !t.shunt && !this.rescues.some((R) => R.broken === t.id));
+    if (!cand.length) return;
+    cand.sort((a, b) => b.waitRed - a.waitRed);
+    const t = cand[0];
+    const hs = this.headS(t);
+    let st = "TR", bd = Infinity;
+    for (const c of ["TR", "SB", "HN", "BL", "EI", "AU", "WI", "BZ"]) { const d = Math.abs(this.stS(c) - hs); if (d < bd) { bd = d; st = c; } }
+    if (this.manualSt(st)) return;
+    for (const e of t.body) this.vacate(e);
+    t.body = [];
+    this.il.releaseTrain(t.id);
+    this.umlaufCancel(t.trip, "Teilausfall wegen Verklemmung");
+    for (let i = t.stopIdx; i < t.stops.length; i++) if (!t.stops[i].done) { t.stops[i].done = true; t.stops[i].missed = true; }
+    t.gone = true;
+    this.trains = this.trains.filter((x) => x !== t);
+    this.log(`Netzleitstelle: ${t.no} wird wegen Verklemmung bei ${this.il.sig(t.nextSig).name} aus dem Bereich genommen (Teilausfall)`, "warn");
+    this.jamCool = this.time + 600;
+  }
+  private orphanSince = new Map<number, number>();
+  private routeJanitor() {
+    for (const r of [...this.il.routes.values()]) {
+      let orphan = false;
+      if (r.used) orphan = r.train !== undefined && !this.trains.some((t) => t.id === r.train);
+      else orphan = this.il.sig(r.path.sig).auto && !this.trains.some((t) => t.nextSig === r.path.sig || (t.body.length && this.g.edges[t.body[t.body.length - 1]].lock === r.id));
+      if (!orphan) { this.orphanSince.delete(r.id); continue; }
+      const since = this.orphanSince.get(r.id) ?? this.time;
+      this.orphanSince.set(r.id, since);
+      if (this.time - since < 180) continue;
+      this.orphanSince.delete(r.id);
+      if (!r.used) { this.il.cancel(r.path.sig); continue; }
+      for (const e of r.path.edges) if (this.g.edges[e].lock === r.id && !this.g.edges[e].occ) this.g.edges[e].lock = 0;
+      this.il.releaseOverlap(r);
+      this.il.routes.delete(r.id);
+      const s = this.il.sig(r.path.sig);
+      if (s.route === r.id) s.route = 0;
+    }
+  }
+
+  // ---------------- Liegengebliebener Zug und Hilfslok ----------------
+  // Ein Triebfahrzeug fällt auf der freien Strecke endgültig aus. Die Hilfslok (Diesel der Notfalltechnik) kommt
+  // aus Köln-Gremberg oder Siegen als Lokzug bis zum nächsten Bahnhof vor dem Zug, fährt von dort als Sperrfahrt
+  // ins gesperrte Gleis, kuppelt vorne an und zieht den Zug bis zu diesem Bahnhof, wo er endet.
+  rescues: { broken: number; no: string; st: string; phase: number; at: number; lzKey?: number; tries: number }[] = [];
+  breakdown(): string | null {
+    const g = this.g, r = this.rand;
+    if (this.rescues.length) return "es läuft schon ein Hilfseinsatz";
+    const plain = (e: number) => { const E = g.edges[e]; return !E.platform && [4, 5].includes(g.nodes[E.a].y) && g.nodes[E.a].y === g.nodes[E.b].y && g.nodes[E.a].swSide === undefined && g.nodes[E.b].swSide === undefined; };
+    const cand = this.trains.filter((t) => t.cat !== "G" && t.v > 8 && !t.exiting && !t.fault && !t.shunt && !t.trip.special && t.body.every(plain)
+      && !g.nodes.some((n) => n.swSide !== undefined && n.s !== undefined && (n.s - this.headS(t)) * t.dir > -50 && (n.s - this.headS(t)) * t.dir < 400));
+    for (let k = 0; k < 6 && cand.length; k++) {
+      const t = cand.splice(Math.floor(r() * cand.length), 1)[0];
+      const hs = this.headS(t);
+      if (hs < 12500 || hs > 68300) continue;
+      const st = this.rescueStation(t);
+      if (!st) continue;
+      const what = ["Hauptschalter fällt immer wieder, Triebfahrzeug lässt sich nicht mehr aufrüsten", "Kompressor ausgefallen, Bremsen lassen sich nicht mehr lösen", "Antrieb ausgefallen, Fahrzeugsteuerung meldet schweren Fehler"][Math.floor(r() * 3)];
+      t.fault = `Zug liegt fest: ${what}`;
+      t.faultUntil = 1e12;
+      t.radio.push({ t: this.time, from: "tf", text: `${t.no}: Mein Zug ist liegengeblieben bei km ${(hs / 1000).toFixed(1).replace(".", ",")}. ${what}. Ich versuche die Störung zu beheben.` });
+      this.rescues.push({ broken: t.id, no: t.no, st, phase: 0, at: this.time + 480 + r() * 240, tries: 0 });
+      this.addFault("vehicle", t.id, 1e12, `${t.no} liegt bei km ${(hs / 1000).toFixed(1).replace(".", ",")} fest (${what})`);
+      this.log(`${t.no} ist bei km ${(hs / 1000).toFixed(1).replace(".", ",")} liegengeblieben: ${what}. Tf versucht die Störung zu beheben`, "bad");
+      this.note("Störung", `${t.no} liegt bei km ${(hs / 1000).toFixed(1).replace(".", ",")} fest: ${what}`);
+      return null;
+    }
+    return "kein passender Zug auf der freien Strecke";
+  }
+  // nächster Bahnhof (mit Weichen) vor dem Zug: dorthin kommt die Hilfslok, dort endet der Zug
+  private rescueStation(t: Train): string | undefined {
+    const g = this.g, hs = this.headS(t);
+    // nur Bahnhöfe, die der Zug ohnehin anfährt (gleiche Strecke), mit Weichen für die Sperrfahrt
+    const st = t.stops.find((s, i) => i >= t.stopIdx && !s.done && (this.stS(s.st) - hs) * t.dir > 800 && (this.stS(s.st) - hs) * t.dir < 12000
+      && g.nodes.some((n) => n.swSide !== undefined && Math.abs((n.s ?? -1e9) - this.stS(s.st)) < 700));
+    return st?.st;
+  }
+  private rescueTrip(R: { broken: number; st: string }): TripSpec | undefined {
+    const o = this.trains.find((x) => x.id === R.broken);
+    if (!o) return undefined;
+    const portal = o.dir > 0 ? "E_BZ" : "W_M";
+    const tpl = [...this.pending, ...this.trains.map((x) => x.trip)].find((q) => q.entryPortal === portal && q.cat === "G")
+      ?? [...this.pending, ...this.trains.map((x) => x.trip)].find((q) => q.entryPortal === portal);
+    if (!tpl) return undefined;
+    const at = this.time + 1200 + this.rand() * 900;
+    const run = Math.abs((this.g.nodes[this.g.portals[portal].outNode].s ?? 0) - this.stS(R.st)) / 15;
+    return { ...tpl, key: this.ops.specialKey++, no: `Lz ${71000 + Math.floor(this.rand() * 900)}`, cat: "G", len: 20, vmax: 100, mass: 85, line: "", initialDelay: 0,
+      entryPortal: portal, exitPortal: undefined, entryTime: at, turnInto: undefined, turnedFrom: undefined, special: "Hilfslok",
+      stops: [{ st: R.st, arr: at + run, dep: at + run + 60 } as any], from: portal === "E_BZ" ? "Siegen (Notfalltechnik)" : "Köln-Gremberg (Notfalltechnik)", to: this.g.stations[R.st].name };
+  }
+  // Antwort auf die Frage, wie es weitergeht (aus Ops)
+  rescueRequest(id: number, retry: boolean) {
+    const R = this.rescues.find((x) => x.broken === id);
+    const o = this.trains.find((x) => x.id === id);
+    if (!R || !o) return;
+    if (retry && R.tries < 1) {
+      R.tries++;
+      if (this.rand() < 0.35) {
+        o.fault = "Notdürftig repariert, fährt langsam bis zum nächsten Bahnhof";
+        o.faultUntil = this.time + 60; o.towed = true;
+        this.rescueEndAt(o, R.st);
+        this.faults = this.faults.filter((f) => !(f.kind === "vehicle" && f.target === o.id));
+        o.radio.push({ t: this.time, from: "tf", text: `${o.no}: Ich habe ihn wieder aufgerüstet, fahre aber nur noch langsam bis ${this.g.stations[R.st].name}. Dort ist Schluss.` });
+        this.log(`${o.no}: Störung notdürftig behoben, Zug fährt langsam bis ${this.g.stations[R.st].name} und endet dort`, "info");
+        this.rescues = this.rescues.filter((x) => x !== R);
+        return;
+      }
+      R.phase = 0; R.at = this.time + 600;
+      o.radio.push({ t: this.time, from: "tf", text: `${o.no}: Verstanden, ich probiere es noch einmal mit Zurücksetzen der Fahrzeugsteuerung.` });
+      return;
+    }
+    const q = this.rescueTrip(R);
+    if (!q) { R.phase = 0; R.at = this.time + 300; return; }
+    R.lzKey = q.key; R.phase = 2;
+    this.pending.push(q);
+    this.pending.sort((a, b) => a.entryTime + a.initialDelay - (b.entryTime + b.initialDelay));
+    const P = this.g.portals[q.entryPortal!];
+    this.log(`Notfallmanager: Hilfslok ${q.no} (Diesellok der Notfalltechnik) kommt aus ${P.label}, Einbruch ca. ${clock(q.entryTime)}. Sie fährt bis ${this.g.stations[R.st].name} und von dort als Sperrfahrt an ${o.no}`, "warn");
+    this.note("Hilfslok", `Hilfslok ${q.no} für ${o.no} angefordert, kommt aus ${P.label} (Einbruch ca. ${clock(q.entryTime)}), Übergabe in ${this.g.stations[R.st].name}`);
+    o.radio.push({ t: this.time, from: "fdl", text: `${o.no}, die Hilfslok ist angefordert und kommt von vorne. Bitte Zug gegen Wegrollen sichern und auf die Hilfslok warten.` });
+  }
+  // Fdl gibt die Sperrfahrt frei (aus Ops oder automatisch)
+  rescueGo(id: number): string | null {
+    const R = this.rescues.find((x) => x.broken === id);
+    const o = this.trains.find((x) => x.id === id);
+    const u = R && this.trains.find((x) => x.trip.key === R.lzKey);
+    if (!R || !o || !u) return "Hilfslok ist nicht da";
+    const tg = this.coupleTarget(u, o, 9500);
+    if (!tg) { R.phase = 3; R.at = this.time + 60; R.tries++; return "Fahrweg zum Zug ist noch nicht frei"; }
+    if (tg.dir !== u.dir) this.flip(u);
+    const err = this.setShuntSwitches(u, tg.edges);
+    if (err) { if (tg.dir !== u.dir) this.flip(u); R.phase = 3; R.at = this.time + 60; R.tries++; return err; }
+    for (const e of [...tg.edges, ...(tg.rev?.edges ?? [])]) if (!o.body.includes(e)) this.g.edges[e].lock = -u.id;
+    u.couple = o.id;
+    u.shunt = { edges: [u.body[u.body.length - 1], ...tg.edges], label: `Sperrfahrt an ${o.no}`, rev: tg.rev };
+    u.dwelling = false; u.parked = false;
+    R.phase = 5;
+    u.radio.push({ t: this.time, from: "fdl", text: `${u.no}, Befehl: Sie fahren als Sperrfahrt in das gesperrte Gleis bis an ${o.no}, auf Sicht, höchstens 40 km/h, zuletzt Schrittgeschwindigkeit.` });
+    u.radio.push({ t: this.time, from: "tf", text: `${u.no}: Befehl verstanden, fahre als Sperrfahrt an ${o.no}.` });
+    this.note("Befehl", `Sperrfahrt ${u.no} in das gesperrte Gleis bis an ${o.no}`);
+    this.log(`Sperrfahrt ${u.no} fährt an ${o.no}`, "info");
+    return null;
+  }
+  private rescueCoupled(u: Train, o: Train) {
+    this.rescues = this.rescues.filter((x) => x.broken !== o.id);
+    const R = { st: u.stops[0]?.st ?? this.stationOf(u) };
+    o.fault = undefined; o.faultUntil = 0; o.towed = true; o.hold = false; o.sight = true; o.orderV = 40;
+    this.faults = this.faults.filter((f) => !(f.kind === "vehicle" && f.target === o.id));
+    this.rescueEndAt(o, R.st);
+    o.dwelling = false;
+    o.faultUntil = this.time + 300; o.fault = "Hilfslok gekuppelt, Bremsprobe";
+    this.brakeTest(o, 300);
+    this.log(`${o.no}: Hilfslok ${u.no} ist gekuppelt. Nach der Bremsprobe wird der Zug nach ${this.g.stations[R.st].name} gezogen und endet dort`, "good");
+    this.note("Hilfslok", `${u.no} an ${o.no} gekuppelt, Zug wird nach ${this.g.stations[R.st].name} geschleppt`);
+  }
+  // Zug endet am Bahnhof st (Teilausfall), höchstens 60 km/h
+  private rescueEndAt(o: Train, st: string) {
+    let i = o.stops.findIndex((s, k) => k >= o.stopIdx && s.st === st && !s.done);
+    const eta = this.time + 600;
+    if (i < 0) {
+      i = o.stops.findIndex((s, k) => k >= o.stopIdx && !s.done && (this.stS(s.st) - this.stS(st)) * o.dir > 0);
+      const ns = { st, arr: eta, dep: eta, done: false, plan: this.planTrack(st, o.dir, o.trip.line, this.g.stations[st].name) } as any;
+      if (i < 0) o.stops.push(ns); else o.stops.splice(i, 0, ns);
+      i = o.stops.indexOf(ns);
+    }
+    const lost = o.stops.slice(i + 1).filter((s) => !s.done).length;
+    o.stops = o.stops.slice(0, i + 1);
+    o.trip = { ...o.trip, key: this.ops.specialKey++, exitPortal: undefined, turnInto: undefined, to: this.g.stations[st].name, stops: o.trip.stops.filter((s) => o.stops.some((x) => x.st === s.st)) };
+    o.vmax = Math.min(o.vmax, 60 / 3.6);
+    o.sev = `Zug endet in ${this.g.stations[st].name}${lost ? `, weiter mit dem nächsten Zug` : ""}`;
+    this.cause(o, "Liegengebliebener Zug (Hilfslok)", 1);
+  }
+  private rescueTick() {
+    for (const R of [...this.rescues]) {
+      const o = this.trains.find((x) => x.id === R.broken);
+      const u = R.lzKey ? this.trains.find((x) => x.trip.key === R.lzKey) : undefined;
+      if (!o) {
+        this.rescues = this.rescues.filter((x) => x !== R);
+        if (u) { u.rescue = undefined; u.dissolveAt = this.time; }
+        continue;
+      }
+      if (R.phase === 0 && this.time >= R.at) {
+        R.phase = 1;
+        o.radio.push({ t: this.time, from: "tf", text: `${o.no}: Die Störung lässt sich nicht beheben, der Zug kommt aus eigener Kraft nicht mehr weg.` });
+        this.ops.call(`Tf ${o.no}`, "liegen", `${o.no} kommt aus eigener Kraft nicht mehr weg. Soll ich eine Hilfslok anfordern? Sie kommt von vorne und zieht den Zug bis ${this.g.stations[R.st].name}. Oder ich versuche es noch ein letztes Mal.`,
+          [{ k: "lok", label: "Hilfslok anfordern" }, { k: "nochmal", label: "Noch einmal versuchen (10 min)" }], 240, { train: o.id });
+      }
+      if (u && !u.rescue) u.rescue = o.id;
+      if ((R.phase === 2 || R.phase === 3) && !u && R.lzKey && !this.pending.some((q) => q.key === R.lzKey)) { R.lzKey = undefined; this.rescueRequest(o.id, false); continue; }
+      if ((R.phase === 2 || R.phase === 3) && u && u.dwelling && this.headEdge(u).platform?.st === R.st && this.time >= R.at) {
+        if (this.manualSt(R.st) && R.phase === 2) {
+          R.phase = 4;
+          this.ops.call(`Hilfslok ${u.no}`, "hilfslok", `Hilfslok ${u.no} steht in ${this.g.stations[R.st].name}. Erbitte Befehl für die Sperrfahrt in das gesperrte Gleis bis an ${o.no}.`,
+            [{ k: "ok", label: "Befehl erteilen (Sperrfahrt)" }, { k: "warten", label: "Noch warten" }], 300, { train: o.id });
+        } else {
+          const why = this.rescueGo(o.id);
+          if (why && R.tries > 20) { // geht gar nicht: Zug wird später vom Notfallmanager aus dem Weg geräumt
+            this.log(`Hilfslok ${u.no}: ${why}. Notfallmanager lässt ${o.no} langsam bis ${this.g.stations[R.st].name} fahren`, "warn");
+            this.rescues = this.rescues.filter((x) => x !== R);
+            u.rescue = undefined; u.dissolveAt = this.time + 60;
+            o.fault = "Notbetrieb"; o.faultUntil = this.time + 120; this.rescueEndAt(o, R.st);
+          }
+        }
+      }
+    }
   }
 
   // ---------------- Rangieren ----------------
@@ -863,6 +1361,15 @@ export class World {
     let rem = head.len - t.headPos;
     for (let i = idx + 1; i < sh.edges.length; i++) rem += g.edges[sh.edges[i]].len;
     rem -= 10;
+    const o = t.couple ? this.trains.find((x) => x.id === t.couple) : undefined;
+    if (o && !sh.rev) {
+      // bis an den anderen Zug heranfahren (Kupplung)
+      const last = sh.edges[sh.edges.length - 1];
+      const E = g.edges[last];
+      const free = o.body[0] === last && o.dir === t.dir ? this.tailPos(o) : o.body[o.body.length - 1] === last && o.dir !== t.dir ? E.len - o.headPos : E.len;
+      rem = rem + 10 - (E.len - free) - 2;
+      if (rem <= 0.3) { this.doCouple(t, o); return; }
+    }
     if (rem <= 0.3 && sh.rev) {
       // Sägefahrt: Richtung wechseln und ins Zielgleis zurückdrücken
       t.v = 0;
@@ -887,11 +1394,17 @@ export class World {
       t.shunt = undefined;
       t.shunted = true;
       t.dwelling = true;
-      t.dissolveAt = this.time + 120;
-      this.log(`${t.no} steht in ${sh.label} und wird abgestellt`, "good");
+      const pl = this.headEdge(t).platform;
+      if (t.bereit) {
+        const q = this.pending.find((x) => x.key === t.bereit);
+        if (q && pl && pl.st === q.stops[0].st) { this.takeOver(t, q); return; }
+      }
+      if (t.body.some((e) => this.routeEdges().has(e) && !this.g.edges[e].platform)) { t.parked = false; t.dissolveAt = this.time + 30; return; } // Rangierfahrt nicht am Ziel: neu versuchen oder ins Werk
+      if (pl) { t.dissolveAt = this.time + 600; t.parked = false; this.log(`${t.no} steht in ${sh.label}`, "info"); }
+      else { t.parked = true; t.dissolveAt = 1e12; this.log(`${t.no} steht in ${sh.label} und ist abgestellt`, "good"); }
       return;
     }
-    const allowed = Math.min(25 / 3.6, Math.sqrt(2 * t.dec * rem));
+    const allowed = Math.min((t.rescue && rem > 400 ? 40 : 25) / 3.6, Math.sqrt(2 * t.dec * rem));
     if (t.v < allowed) t.v = Math.min(allowed, t.v + t.acc * dt);
     else t.v = Math.max(allowed, t.v - t.dec * 1.6 * dt);
     const s = Math.max(0, Math.min(t.v * dt, rem));
@@ -1003,6 +1516,14 @@ export class World {
     return null;
   }
 
+  // Zusätzliche Haltezeit für den Fahrgastwechsel je nach Tageszeit und Bahnhof (Sekunden)
+  paxDwell(st: string): number {
+    const h = (((this.time % 86400) + 86400) % 86400) / 3600;
+    const peak = (h >= 6.5 && h < 9) || (h >= 15.5 && h < 18.5) ? 1 : h >= 9 && h < 15.5 ? 0.5 : h >= 18.5 && h < 21 ? 0.4 : 0.15;
+    const size = ["TR", "SB"].includes(st) ? 50 : ["HN", "AU", "BZ", "PW", "SP"].includes(st) ? 25 : 10;
+    return Math.round(size * peak * (0.4 + this.rand() * 1.2));
+  }
+
   // ---------------- Zuglenkung / Selbststellbetrieb ----------------
   private autoRoutes() {
     // Wartende Züge zuerst bedienen, dann nach Nähe zum Signal
@@ -1030,7 +1551,17 @@ export class World {
       if (t.dwelling && t.dwellUntil - this.time > 40) continue;
       if (t.dwelling && t.stopIdx === t.stops.length - 1 && !t.trip.exitPortal) continue;
       const best = this.bestPath(t, paths);
-      if (best) this.il.set(best, this.time);
+      if (best) {
+        this.il.set(best, this.time);
+        // langer Güterzug, der vor dem Zielsignal nicht ganz Platz hat: Ausfahrt gleich mit einstellen, damit er nicht auf Weichen stehen bleibt
+        if (t.cat === "G" && t.len > 120 && best.endSig && this.roomBefore(best.endSig) < t.len + 40 && !this.il.sig(best.endSig).route) {
+          this.nestedBest = true;
+          const nx = this.bestPath(t, this.il.paths.get(best.endSig) ?? []);
+          this.nestedBest = false;
+          if (nx) this.il.set(nx, this.time);
+          else if (t.waitRed < 600 || this.someoneHangs(t, best.endSig)) this.cancelRoute(best.sig); // Ausfahrt geht nicht: lieber hier warten als auf Weichen stehen bleiben
+        }
+      }
     }
   }
 
@@ -1045,11 +1576,12 @@ export class World {
       const c = costs[i];
       // Deutlich schlechtere Umwege (z. B. lange Gegengleisfahrt) nicht wählen, lieber warten
       // (wartet der Zug schon länger, sind auch Umwege und andere Gleise recht)
-      if (c > ideal * 1.25 + 800 + (t.waitRed > 120 ? 3000 : 0)) continue;
+      if (c > ideal * 1.25 + 800 + (t.waitRed > 120 ? 3000 : 0) + (t.waitRed > 900 ? 1e7 : 0)) continue;
       if (this.singleTrackBlocked(t, p)) continue;
       if (this.ops.lueConflict(p, t)) continue;
       // Zuglänge: lange Züge nicht vor ein Signal schicken, vor dem sie mit dem Ende in den Weichen stehen bleiben würden
-      if (p.endSig && t.cat === "G" && t.len > 120 && this.roomBefore(p.endSig) < t.len + 10 && t.waitRed < 600 && !this.canGoOn(p.endSig)) continue;
+      if (this.grabsLastTrack(t, p)) continue;
+      if (!this.nestedBest && p.endSig && t.cat === "G" && t.len > 120 && this.roomBefore(p.endSig) < t.len + 40 && (t.waitRed < 600 || this.someoneHangs(t, p.endSig)) && !this.canGoOnFor(t, p.endSig)) continue;
       if (p.endPortal && this.zugmeldung && !this.outAccepted(t)) continue;
       if (this.il.check(p)) continue;
       if (c < bestCost) {
@@ -1060,6 +1592,35 @@ export class World {
     return bestCost < 1e8 ? best : null;
   }
 
+  // Nicht das letzte freie Gleis belegen, das ein Gegenzug braucht (sonst stehen beide Bahnhöfe voll und nichts geht mehr)
+  private grabsLastTrack(t: Train, p: PathDef): boolean {
+    const g = this.g;
+    const pl = p.edges.map((e) => g.edges[e].platform).find(Boolean);
+    if (!pl) return false;
+    const st = pl.st, sS = this.stS(st);
+    const own = t.stops.find((x, i) => i >= t.stopIdx && x.st === st && !x.done);
+    if ((own ? (own.disp ?? own.plan) : this.planTrack(st, t.dir, t.trip.line, t.trip.to)) === pl.track) return false; // eigenes Regelgleis
+    // Strecke dahinter staut sich (Zug steht auf der freien Strecke): nicht aufs Gleis der Gegenrichtung ausweichen
+    if (t.waitRed < 3600 && this.trains.some((o) => o !== t && o.dir === t.dir && o.v < 0.5 && !o.dwelling && (this.headS(o) - sS) * t.dir > 200 && (this.headS(o) - sS) * t.dir < 4000)) return true;
+    const need = new Set<string>();
+    let waiting = false;
+    for (const o of this.trains) {
+      if (o === t || o.dir === t.dir || o.parked || o.shunt || !o.body.length) continue;
+      const d = (sS - this.headS(o)) * o.dir;
+      if (d < 50 || d > 5000) continue;
+      const s = o.stops.find((x, i) => i >= o.stopIdx && x.st === st && !x.done);
+      const tr = s ? (s.disp ?? s.plan) : this.planTrack(st, o.dir, o.trip.line, o.trip.to);
+      if (tr === pl.track) { need.add(tr); if (o.waitRed > 30 || o.v < 0.5) waiting = true; }
+    }
+    if (!need.has(pl.track)) return false;
+    return waiting || t.waitRed < 2400;
+  }
+  // Steht schon ein anderer Zug in der Nähe mit dem Zugschluss auf Weichen? Dann nicht auch noch hineinfahren (gegenseitige Blockade)
+  private someoneHangs(t: Train, sid: number): boolean {
+    const g = this.g, s = g.nodes[this.il.sig(sid).node].s ?? 0;
+    return this.trains.some((o) => o !== t && o.cat === "G" && o.len > 120 && o.dir !== t.dir && !o.shunt && o.v < 0.5 && Math.abs(this.headS(o) - s) < 2500
+      && o.body.some((e) => g.nodes[g.edges[e].a].swSide !== undefined || g.nodes[g.edges[e].b].swSide !== undefined) && !o.dwelling);
+  }
   // Platz vor einem Signal bis zur nächsten Weiche (dort kann ein Zug stehen, ohne Weichen zu blockieren)
   private roomCache = new Map<number, number>();
   roomBefore(sid: number): number {
@@ -1075,12 +1636,21 @@ export class World {
       room += E.len;
       n = otherEnd(E, n);
       const M = g.nodes[n];
-      if (M.swSide !== undefined || (sg.dir > 0 ? M.west : M.east).length !== 1 || (sg.dir > 0 ? M.sigE : M.sigW)) break;
+      if (M.swSide !== undefined) { room -= E.len; break; } // die Kante an der Weiche selbst zählt nicht (Flankenschutz)
+      if ((sg.dir > 0 ? M.west : M.east).length !== 1 || (sg.dir > 0 ? M.sigE : M.sigW)) break;
     }
     this.roomCache.set(sid, room);
     return room;
   }
   // Kann hinter dem Signal sofort weitergefahren werden (Fahrstraße frei oder schon eingestellt)?
+  private nestedBest = false;
+  private canGoOnFor(t: Train, sid: number): boolean {
+    if (this.il.sig(sid).route) return true;
+    this.nestedBest = true;
+    const ok = !!this.bestPath(t, this.il.paths.get(sid) ?? []);
+    this.nestedBest = false;
+    return ok;
+  }
   private canGoOn(sid: number): boolean {
     const s = this.il.sig(sid);
     if (s.route) return true;
@@ -1364,6 +1934,8 @@ export class World {
         this.addFault("vehicle", t.id, t.faultUntil, `${what} an ${t.no} bei ${this.nearStation(this.g.nodes[this.g.edges[t.body[t.body.length - 1]].a].x)}, ca. ${Math.round(dur / 60)} min`);
       }
     }
+    // Liegengebliebener Zug (Hilfslok nötig): etwa alle 6 Stunden
+    if (r() < k / 600) this.breakdown();
     // Achszählerstörung: etwa alle 180 min
     if (r() < k / 180) this.azFault();
     this.azAuto();
@@ -1446,6 +2018,13 @@ export class World {
     return null;
   }
 
+  // Gehört der Bahnhof (auch Haltepunkt) zu einem Bereich, den der Spieler stellt?
+  manualSt(st: string): boolean {
+    const s = this.stS(st);
+    let best = "", bd = Infinity;
+    for (const c of ["TR", "SB", "HN", "BL", "EI", "AU", "WI", "BZ"]) { const d = Math.abs(this.stS(c) - s); if (d < bd) { bd = d; best = c; } }
+    return this.manualAreas.has(st) || this.manualAreas.has(best);
+  }
   // In Bereichen, die der Spieler nicht stellt, erledigt der Nachbar-Fdl den Ablauf selbst
   private azOwnerManual(sec: { edges: number[] }) {
     const x = this.g.nodes[this.g.edges[sec.edges[0]].a].x;
@@ -1929,11 +2508,16 @@ export class World {
     const ps = this.pendingStop(t);
     const E = this.headEdge(t);
     if (t.hold) out.push({ text: "Halt auf Anordnung (Funk)", kind: "warn" });
-    if (t.fault && t.faultUntil > this.time) out.push({ text: `${t.fault}, noch ca. ${Math.max(1, Math.round((t.faultUntil - this.time) / 60))} min`, kind: "bad" });
+    if (t.fault && t.faultUntil > this.time) out.push({ text: t.faultUntil > this.time + 86400 ? t.fault : `${t.fault}, noch ca. ${Math.max(1, Math.round((t.faultUntil - this.time) / 60))} min`, kind: "bad" });
+    if (t.rescue) out.push({ text: `Hilfslok für ${this.trains.find((x) => x.id === t.rescue)?.no ?? "?"}`, kind: "warn" });
+    if (t.towed) out.push({ text: "Wird geschleppt bzw. fährt im Notbetrieb, höchstens 60 km/h", kind: "warn" });
     if (t.dwelling) {
       const isLast = t.stopIdx === t.stops.length - 1 && !t.trip.exitPortal;
       if (isLast && t.trip.turnInto) out.push({ text: `Endstation, wendet als ${t.trip.turnInto.no}${t.reverseAt ? ` um ${clock(t.reverseAt)}` : ""}`, kind: "info" });
+      else if (isLast && t.bereit) { const q = this.pending.find((x) => x.key === t.bereit); out.push({ text: `Abgestellt, wird bereitgestellt als ${q?.no ?? "?"}${q ? ` (ab ${clock(q.stops[0].dep)})` : ""}`, kind: "info" }); }
+      else if (isLast && t.parked) out.push({ text: "Abgestellt, wartet auf die nächste Leistung", kind: "info" });
       else if (isLast) out.push({ text: "Endstation, wird abgestellt", kind: "info" });
+      else if (t.stopIdx === 0 && !t.trip.entryPortal && !t.trip.turnedFrom && this.time < t.dwellUntil) out.push({ text: `Bremsprobe und Vorbereitung, abfahrbereit ca. ${clock(t.dwellUntil)}`, kind: "info" });
       else if (this.time < t.dwellUntil) out.push({ text: `Fahrgastwechsel, Abfahrt ${clock(t.dwellUntil)}`, kind: "info" });
       else if (t.nextSig && !this.il.proceeds(this.il.sig(t.nextSig), this.time)) out.push({ text: `Abfahrbereit, wartet auf Ausfahrt ${this.il.sig(t.nextSig).name}`, kind: "warn" });
       else out.push({ text: "Abfahrbereit", kind: "ok" });

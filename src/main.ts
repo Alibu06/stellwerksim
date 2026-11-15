@@ -520,7 +520,7 @@ async function boot() {
       const left = Math.max(0, Math.round((f.until - w.time) / 60));
       const waiting = f.kind === "signal" ? w.trains.find((t) => t.nextSig === f.target && t.distNextSig < 400) : undefined;
       const btn = waiting ? `<button data-zs1="${f.target}">Ersatzsignal für ${waiting.no}</button>` : "";
-      return `<div class="fault"><div>${f.text}</div><small>noch ca. ${left} min</small>${btn}</div>`;
+      return `<div class="fault"><div>${f.text}</div><small>${f.until - w.time > 86400 ? "Dauer offen" : `noch ca. ${left} min`}</small>${btn}</div>`;
     }).join("");
     for (const sec of w.azSections) {
       const last = w.azLastTrain(sec.id);
@@ -679,6 +679,7 @@ async function boot() {
         return null;
       }
       case "call": return w.ops.answer(Number(d.id), String(d.k));
+      case "bus": return w.ops.waitBus(Number(d.id), Number(d.bus));
       case "zl": return w.setZl(Number(d.key), String(d.mode));
       case "order": return w.issueOrder(Number(d.id), String(d.kind), Number(d.v ?? 40), String(d.reason ?? ""));
       case "watch": bigId = d.id === null || d.id === undefined ? null : Number(d.id); return null;

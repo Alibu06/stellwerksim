@@ -35,6 +35,8 @@ export function trackHtml(s: { plan?: string; disp?: string; track?: string }): 
 }
 const esc = (s: string) => s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]!));
 
+const clockOf = (t: number) => `${String(Math.floor((((t % 86400) + 86400) % 86400) / 3600)).padStart(2, "0")}:${String(Math.floor(t / 60) % 60).padStart(2, "0")}`;
+
 export class TrainWindow {
   el: HTMLElement;
   train: Train | null = null;
@@ -130,6 +132,7 @@ export class TrainWindow {
           <tr><td>Weiter</td><td>${t.trip.exitPortal ? `Richtung ${g.portals[t.trip.exitPortal].label}` : t.trip.turnInto ? `wendet als ${t.trip.turnInto.no}` : "endet hier"}</td></tr>
           ${t.trip.special === "Lü" ? `<tr><td>Besonderheit</td><td class="warn">Lü-Sendung (Lademaßüberschreitung): auf der freien Strecke darf auf dem Nachbargleis kein Zug entgegenkommen</td></tr>` : t.trip.special ? `<tr><td>Sonderzug</td><td>${esc(t.trip.special)}</td></tr>` : ""}
           ${t.sev ? `<tr><td>Ersatzverkehr</td><td class="warn">${esc(t.sev)}</td></tr>` : ""}
+          ${w.ops.buses.filter((b) => !b.done && Math.sign(w.stS(b.to) - w.stS(b.from)) === t.dir && t.stops.some((s, i) => i >= t.stopIdx && s.st === b.to && !s.done)).slice(0, 3).map((b) => `<tr><td>SEV-Anschluss</td><td>${b.no} aus ${esc(g.stations[b.from].name)}, an ${esc(g.stations[b.to].name)} ca. ${clockOf(b.arr)} (${b.pax} Reisende) ${t.waitBus === b.id ? `<b class="warn">Zug wartet</b>` : `<button data-a="bus" data-bus="${b.id}">Auf Bus warten</button>`}</td></tr>`).join("")}
           ${w.ops.crewChange.get(t.trip.key) ? `<tr><td>Personal</td><td>Personalwechsel in ${esc(g.stations[w.ops.crewChange.get(t.trip.key)!].name)}</td></tr>` : ""}
           ${w.umlaufNo(t.trip) ? `<tr><td>Umlauf</td><td>kommt zurück als ${w.umlaufNo(t.trip)}</td></tr>` : ""}
           <tr><td>Zuglenkung</td><td><select class="zlsel" data-zl="${t.trip.key}">${[["", "wie am Signal"], ["auto", "immer automatisch"], ["aus", "aus (ich stelle)"]].map(([v, l]) => `<option value="${v}" ${(w.zlMode.get(t.trip.key) ?? "") === v ? "selected" : ""}>${l}</option>`).join("")}</select></td></tr>
@@ -145,13 +148,27 @@ export class TrainWindow {
         const dDep = s.actDep !== undefined ? s.actDep - s.dep : Math.max(prog + (s.dep - s.arr), s.dep) - s.dep;
         const cls = (d: number) => (d >= 300 ? "bad" : d >= 60 ? "warn" : "ok");
         const ist = (x: number | undefined, d: number) => (x !== undefined ? `<span class="${cls(d)}">${hm(x)}</span>` : `<span class="${cls(d)} prog">${hm(s.arr + Math.max(0, d))}</span>`);
-        return `<tr class="${s.done ? "done" : i === t.stopIdx ? "cur" : ""}"><td>${esc(g.stations[s.st].name)}${s.missed ? " ✕" : ""}</td>
+        return `<tr class="${s.done ? "done" : i === t.stopIdx ? "cur" : ""}"><td>${esc(g.stations[s.st].name)}${s.missed ? " ✕" : ""}${s.op === "kuppeln" ? `<br><small class="op">Verstärkung kuppeln</small>` : s.op === "trennen" ? `<br><small class="op">hintere Einheit abhängen</small>` : ""}</td>
           <td>${hm(s.arr)}</td><td>${ist(s.actArr, dArr)}</td><td>${hm(s.dep)}</td><td>${s.actDep !== undefined ? `<span class="${cls(dDep)}">${hm(s.actDep)}</span>` : `<span class="${cls(dDep)} prog">${hm(s.dep + Math.max(0, dDep))}</span>`}</td>
           <td>${!s.done && t.cat !== "G" && !(t.dwelling && i === t.stopIdx) && w.platformTracks(s.st).length > 1
             ? `<select class="trk" data-st="${s.st}">${w.platformTracks(s.st).map((p) => `<option value="${p.track}" ${(s.disp ?? s.plan) === p.track ? "selected" : ""}>${p.track}${p.track === s.plan ? " (Regel)" : ""}${p.len < t.len ? " (zu kurz)" : ""}</option>`).join("")}</select>${s.disp && s.disp !== s.plan ? ` <s>${s.plan ?? ""}</s>` : ""}`
             : trackHtml(s)}</td></tr>`;
       }).join("");
-      return rows ? `<table class="plan"><tr><th>Halt</th><th>an Soll</th><th>an Ist/Prog</th><th>ab Soll</th><th>ab Ist/Prog</th><th>Gl.</th></tr>${rows}</table>
+      // Wende: Rückfahrt schon ausgegraut zeigen, damit man sieht, was noch kommt
+      let turn = "";
+      const nx = t.trip.turnInto;
+      const lastS = t.stops[t.stops.length - 1];
+      if (!t.trip.exitPortal && lastS) {
+        if (nx) {
+          const planDep = nx.stops[0].dep;
+          const expDep = Math.max(planDep, t.reverseAt || 0, (lastS.actArr ?? w.eta(t, lastS)) + 240);
+          const d = expDep - planDep;
+          turn = `<tr class="turnrow"><td colspan="6">Endstation ${esc(g.stations[lastS.st].name)}, wendet als <b>${esc(nx.no)}</b> nach ${esc(nx.to)} um ${hm(planDep)}${d >= 60 ? ` <span class="${d >= 300 ? "bad" : "warn"}">(voraussichtlich ${hm(expDep)})</span>` : ""}</td></tr>` +
+            nx.stops.slice(1).map((s) => `<tr class="nextrip"><td>${esc(g.stations[s.st].name)}</td><td>${hm(s.arr)}</td><td>${d >= 60 ? hm(s.arr + d) : ""}</td><td>${hm(s.dep)}</td><td>${d >= 60 ? hm(s.dep + d) : ""}</td><td>${esc(w.planTrack(s.st, nx.dir, nx.line, nx.to) ?? "")}</td></tr>`).join("") +
+            (nx.exitPortal ? `<tr class="nextrip"><td colspan="6">weiter Richtung ${esc(g.portals[nx.exitPortal].label)}</td></tr>` : "");
+        } else turn = `<tr class="turnrow"><td colspan="6">Endstation ${esc(g.stations[lastS.st].name)}, Zug wird abgestellt</td></tr>`;
+      }
+      return rows ? `<table class="plan"><tr><th>Halt</th><th>an Soll</th><th>an Ist/Prog</th><th>ab Soll</th><th>ab Ist/Prog</th><th>Gl.</th></tr>${rows}${turn}</table>
         <p class="hint">Kursiv = Prognose. Grün pünktlich, gelb ab 1 min, rot ab 5 min. Gleis ändern: Auswahl in der Spalte Gl. (Gleisänderung, Regelgleis wird durchgestrichen).</p>` : `<p class="hint">Güterzug ohne Verkehrshalt im Bereich.</p>`;
   }
 
@@ -248,6 +265,7 @@ export class TrainWindow {
       if (a === "center") this.onCenter?.(t);
       if (a === "hold") { radio(this.w, t, "Sofort anhalten", "halt"); this.render(true); }
       if (a === "go") { radio(this.w, t, "Weiterfahrt erlaubt", "weiter"); this.render(true); }
+      if (a === "bus") { this.toast(this.w.ops.waitBus(t.id, Number(b.dataset.bus)) ?? `${t.no} wartet auf den Bus`); this.render(true); }
       if (a === "reason") {
         t.reason = (this.el.querySelector<HTMLSelectElement>("#reasonSel")!.value) || undefined;
         t.reasonNote = this.el.querySelector<HTMLInputElement>("#reasonNote")!.value || undefined;

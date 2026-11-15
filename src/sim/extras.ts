@@ -63,12 +63,12 @@ export interface Site {
   active: boolean; prev: Map<number, { slow?: number; closed?: boolean }>;
 }
 export interface Happening {
-  id: number; kind: "feuer" | "personen" | "notarzt" | "polizei" | "baum" | "pkw"; text: string; edges: number[]; until: number;
+  id: number; kind: "feuer" | "personen" | "notarzt" | "polizei" | "baum" | "pkw" | "ol"; text: string; edges: number[]; until: number;
   prev: Map<number, { slow?: number; closed?: boolean }>; station?: string; sec?: [string, string];
 }
 
 // Abschnitte zwischen benachbarten Bahnhöfen (für Ereignisse)
-const SECTIONS: [string, string][] = [
+export const SECTIONS: [string, string][] = [
   ["SB", "HN"], ["HN", "BL"], ["BL", "ME"], ["ME", "EI"], ["EI", "HE"], ["HE", "DA"], ["DA", "SL"], ["SL", "RO"], ["RO", "AU"], ["AU", "EZ"], ["EZ", "WI"], ["WI", "NH"], ["NH", "SF"], ["SF", "BZ"],
 ];
 
@@ -322,6 +322,7 @@ export class Extras {
       if (r() < k / 75) this.startHappening(["feuer", "personen", "notarzt", "polizei", "notarzt", "personen"][Math.floor(r() * 6)] as Happening["kind"]);
       else if (W.tree && r() < (k * W.tree) / 400) this.startHappening("baum");
       else if (this.f.bue && r() < k / 400) this.startHappening("pkw");
+      else if (r() < (k * (W.tree ? 2 : 1)) / 540) this.startHappening("ol");
     }
   }
 
@@ -356,6 +357,18 @@ export class Extras {
         h.text = `Baum im Gleis zwischen ${nm(sec[0])} und ${nm(sec[1])} (${lane === 4 ? "Gleis Richtung Siegburg" : "Gleis Richtung Betzdorf"}): Gleis gesperrt, Notfallmanager unterwegs`;
         this.close(h, true);
         this.emergencyStop(h.edges, "Schnellbremsung (Baum im Gleis)", 180 + r() * 300);
+        break;
+      }
+      case "ol": {
+        // nur in einem Abschnitt, in dem gerade kein Zug fährt (sonst stünde er ohne Strom)
+        const free = SECTIONS.filter(([a, b]) => { const ed = new Set(this.sectionEdges(a, b)); return ed.size && !w.trains.some((t) => t.body.some((e) => ed.has(e))) && !this.happenings.some((x) => x.sec?.[0] === a); });
+        if (!free.length) return "kein freier Abschnitt";
+        const [a, b] = free[Math.floor(r() * free.length)];
+        h.sec = [a, b];
+        h.edges = this.sectionEdges(a, b);
+        h.until = w.time + 3600 + r() * 5400;
+        h.text = `Oberleitungsstörung zwischen ${nm(a)} und ${nm(b)} (${["Fahrdraht gerissen", "Ast in der Oberleitung", "Isolator defekt, Kurzschluss", "Ausleger nach Sturm verbogen"][Math.floor(r() * 4)]}): Strecke ohne Strom, keine Fahrten, Störungstrupp unterwegs`;
+        this.close(h, true);
         break;
       }
       case "pkw": {
@@ -509,10 +522,25 @@ export class Extras {
     };
     const covered = new Set<number>();
     for (const x of [...this.sites.filter((s) => s.active), ...this.happenings]) for (const e of x.edges) covered.add(e);
+    for (const b of w.ops.buses) {
+      if (b.done && now > b.arr + 600) continue;
+      const conn = b.done ? undefined : w.ops.busConn(b);
+      out.push({ id: `bus${b.id}`, kind: "fdl", icon: "🚌", title: `${b.no}: ${g.stations[b.from].name} → ${g.stations[b.to].name}`, where: `Bus ab ${g.stations[b.from].name}`, from: b.dep, until: b.arr,
+        effect: b.done ? `Angekommen: ${b.result ?? ""}` : `${b.pax} Reisende aus ${b.feeder}. ${conn ? `Anschluss in ${g.stations[b.to].name}: ${conn.no}${conn.waitBus === b.id ? " (wartet)" : ". Soll er warten? Im Zugfenster \"Auf Bus warten\""}` : "Noch kein Anschlusszug in Sicht."}`,
+        trains: conn ? [conn.no] : [] });
+    }
+    const R = w.ops.rotte;
+    if (R && R.phase > 0) {
+      for (const e of R.edges) covered.add(e);
+      const eff = ["", "Rotte arbeitet neben dem Gleis, der Sicherungsposten warnt vor jedem Zug. Züge geben Achtungssignal und fahren höchstens 80 km/h.",
+        "Rotte wartet auf die Gleissperrung (Anruf beantworten).", "Gleis gesperrt, die Rotte arbeitet im Gleis. Züge über das Gegengleis führen oder warten lassen.",
+        "Rotte meldet: Gleis geräumt und befahrbar. Sperrung aufheben!", "Restarbeiten neben dem Gleis, Achtungssignal, höchstens 80 km/h."][R.phase];
+      out.push({ id: "rotte", kind: "baustelle", icon: "👷", title: `${R.name} (${R.men} Mann, ${R.job})`, where: loc(R.edges), from: R.at || undefined, until: R.phase === 3 && R.at ? R.until : undefined, effect: eff, trains: affected(R.edges) });
+    }
 
     for (const f of w.faults) {
       if (f.kind === "event") continue; // als Ereignis unten
-      const base = { id: `f${f.id}`, from: f.from, until: f.until };
+      const base = { id: `f${f.id}`, from: f.from, until: f.until - now > 86400 ? undefined : f.until };
       if (f.kind === "switch") {
         const n = g.nodes[f.target];
         out.push({ ...base, kind: "stoerung", icon: "⚠", title: `Weichenstörung ${n.swName ?? ""}`.trim(), where: w.nearStation(n.x),
@@ -538,16 +566,16 @@ export class Extras {
       } else {
         const t = w.trains.find((x) => x.id === f.target);
         out.push({ ...base, kind: "zug", icon: "🚆", title: f.kind === "door" ? `Türstörung ${t?.no ?? ""}` : `Fahrzeugstörung ${t?.no ?? ""}`, where: t ? w.position(t).text : "",
-          effect: f.kind === "door" ? "Der Zug kann nicht abfahren, bis die Tür geschlossen ist. Folgezüge auf diesem Gleis warten." : "Der Zug steht, der Tf sucht den Fehler. Das Gleis ist so lange blockiert, Folgezüge müssen warten oder umgeleitet werden.",
+          effect: f.kind === "door" ? "Der Zug kann nicht abfahren, bis die Tür geschlossen ist. Folgezüge auf diesem Gleis warten." : f.until - now > 86400 ? "Der Zug liegt fest und braucht eine Hilfslok. Sie kommt als Lokzug bis zum nächsten Bahnhof vor dem Zug und fährt von dort mit Befehl als Sperrfahrt an den Zug. Bis dahin ist das Gleis gesperrt, Folgezüge warten oder wenden." : "Der Zug steht, der Tf sucht den Fehler. Das Gleis ist so lange blockiert, Folgezüge müssen warten oder umgeleitet werden.",
           trains: t ? [t.no] : [] });
       }
     }
     for (const h of this.happenings) {
       if (h.until <= now) continue;
       const blocks = h.edges.some((e) => g.edges[e].closed);
-      out.push({ id: `h${h.id}`, kind: "ereignis", icon: { feuer: "🔥", personen: "🚶", notarzt: "🚑", polizei: "🚓", baum: "🌳", pkw: "🚗" }[h.kind], title: h.text.split(":")[0],
+      out.push({ id: `h${h.id}`, kind: "ereignis", icon: { feuer: "🔥", personen: "🚶", notarzt: "🚑", polizei: "🚓", baum: "🌳", pkw: "🚗", ol: "⚡" }[h.kind], title: h.text.split(":")[0],
         where: h.station ? g.stations[h.station].name : loc(h.edges), until: h.until,
-        effect: h.station ? "Der Zug bleibt so lange am Bahnsteig stehen. Das Gleis ist blockiert, Folgezüge auf andere Gleise legen."
+        effect: h.kind === "ol" ? "Beide Gleise ohne Strom: keine Zugfahrten. Züge vor der Störung wenden lassen (Netzleitstelle schlägt Ersatzverkehr vor). Die SEV-Busse siehst du gelb unter dem Gleisbild. Du entscheidest, ob ein Zug am Wendebahnhof auf den Bus wartet." : h.station ? "Der Zug bleibt so lange am Bahnsteig stehen. Das Gleis ist blockiert, Folgezüge auf andere Gleise legen."
           : blocks ? "Abschnitt gesperrt: keine Fahrstraßen hinein. Züge davor warten oder werden über das andere Gleis (Gegengleis) geführt." : "Fahrt auf Sicht mit höchstens 30 km/h durch den Abschnitt.",
         trains: h.station ? w.trains.filter((t) => t.fault && t.dwelling && t.stops[t.stopIdx]?.st === h.station).map((t) => t.no) : affected(h.edges) });
     }

@@ -190,6 +190,7 @@ document.addEventListener("click", (e) => {
       selId = null;
     } break;
     case "radio": if (t) cmd("radio", { id: t.id, text: b.dataset.text, cmd: b.dataset.cmd }); break;
+    case "bus": if (t) cmd("bus", { id: t.id, bus: Number(b.dataset.bus) }, `${t.no} wartet auf den SEV-Bus`); break;
     case "big": if (t && t.live) openBig(t.id); else toast("Großansicht gibt es für Züge im Bereich", true); break;
     case "reason": if (t) {
       const r = (document.getElementById("bigReason") as HTMLSelectElement | null)?.value ?? "";
@@ -293,7 +294,7 @@ function stopRow(t: SnapTrain, p: SnapStop) {
   const trk = canChange
     ? `<select data-trk="${p.st}" class="${p.disp && p.disp !== p.plan ? "chg" : ""}"><option value="">${p.plan ? `Regel ${p.plan}` : "Regel"}</option>${tracks.map((x) => `<option value="${x}"${p.disp === x && p.disp !== p.plan ? " selected" : ""}>Gl. ${x}</option>`).join("")}</select>`
     : trackHtml(p);
-  return `<tr class="${p.betr ? "betr" : ""}"><td>${esc(stName(p.st))}${p.betr ? " <small>Betriebshalt</small>" : ""}</td><td class="t">${hm(p.arr)}</td>
+  return `<tr class="${p.betr ? "betr" : ""}"><td>${esc(stName(p.st))}${p.betr ? " <small>Betriebshalt</small>" : ""}${p.op === "kuppeln" ? " <small>Verstärkung kuppeln</small>" : p.op === "trennen" ? " <small>hintere Einheit abhängen</small>" : ""}</td><td class="t">${hm(p.arr)}</td>
     <td class="t ${cls(d)}">${arrived ? hm(p.actArr!) : d >= 60 ? hm(p.eta) : "–"}</td><td class="t">${p.dep !== p.arr ? hm(p.dep) : ""}${prog - p.dep >= 60 ? `<small class="warn">${hm(prog)}</small>` : ""}</td><td>${trk}</td></tr>`;
 }
 

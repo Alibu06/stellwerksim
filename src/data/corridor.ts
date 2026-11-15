@@ -257,6 +257,8 @@ function finishEast(L: Layout): Graph {
     L.sig(52130, y, 1, `AU N${t}`); // Gl. 11: Gleisende-Signal am Stumpfgleis
   }
   L.sig(51850, 3, -1, "AU P31"); L.sig(52150, 3, 1, "AU N31");
+  L.lane(2, 51820, 52160, { v: 25 }); L.conn(52160, 2, 52240, 3, 25); // Gl. 32 Abstellgleis (stumpf)
+  L.label(51900, 1.55, "Abstellgleis");
   L.xo(52420, 4, 5, 80); L.xo(52520, 5, 4, 80);
   L.sig(52849, 4, -1, "AU F2"); L.sig(52849, 5, 1, "AU F1", "block");
   L.station("AU", "Au (Sieg)", 51943, 1.6);
@@ -321,6 +323,8 @@ function finishEast(L: Layout): Graph {
     L.sig(69350, y, 1, `BZ N${t}`);
   }
   L.sig(68700, 2, -1, "BZ P6"); L.sig(69250, 2, 1, "BZ N6");
+  L.conn(68600, 5, 68680, 6, 25); L.lane(6, 68680, 69300, { v: 25 }); // Abstellgruppe / Gbf-Gleis (stumpf)
+  L.label(69000, 6.45, "Abstellgleis / Gbf");
   L.xo(69520, 4, 5, 80); L.xo(69620, 5, 4, 80);
   // Hellertalbahn und Daadetalbahn (eingleisig)
   L.conn(69760, 5, 69840, 7, 50);

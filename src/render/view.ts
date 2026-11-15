@@ -256,6 +256,7 @@ export class View {
     this.drawTracks(ctx);
     this.drawCrossings(ctx);
     this.drawTrainBodies(ctx);
+    this.drawBuses(ctx);
     this.drawSwitches(ctx);
     this.drawDistants(ctx);
     this.drawSignals(ctx);
@@ -430,7 +431,7 @@ export class View {
         ctx.font = this.mono(8, 700);
         ctx.fillStyle = COLORS.yellow;
         ctx.textAlign = "center";
-        if (Math.hypot(b.x - a.x, b.y - a.y) > 60 * this.k) ctx.fillText(`${e.work ? "Bau " : ""}La ${e.slow}`, (a.x + b.x) / 2, (a.y + b.y) / 2 - 8 * this.k);
+        if (Math.hypot(b.x - a.x, b.y - a.y) > 60 * this.k) ctx.fillText(`${e.rotte ? "Rotte " : e.work ? "Bau " : ""}La ${e.slow}`, (a.x + b.x) / 2, (a.y + b.y) / 2 - 8 * this.k);
       }
       if (e.closed) {
         ctx.strokeStyle = COLORS.fault;
@@ -635,6 +636,68 @@ export class View {
     }
   }
 
+  // Schienenersatzverkehr: Straße unter dem Gleisbild zwischen den Bahnhöfen, Busse schematisch nach Fahrplan
+  private drawBuses(ctx: CanvasRenderingContext2D) {
+    const ops = this.w.ops, now = this.w.time, st = this.g.stations;
+    const pairs = new Map<string, [string, string]>();
+    for (const x of ops.sev) pairs.set([x.a, x.b].sort().join("|"), [x.a, x.b]);
+    for (const b of ops.buses) pairs.set([b.from, b.to].sort().join("|"), [b.from, b.to]);
+    if (!pairs.size) return;
+    // Straße knapp unter dem untersten Gleis der Strecke zwischen beiden Bahnhöfen
+    const roadY = new Map<string, number>();
+    for (const [a, b] of pairs.values()) {
+      const lo = Math.min(st[a].x, st[b].x) - 300, hi = Math.max(st[a].x, st[b].x) + 300;
+      let my = 5;
+      for (const n of this.g.nodes) if (n.x > lo && n.x < hi && n.y <= 7.5 && n.y > my) my = n.y;
+      roadY.set([a, b].sort().join("|"), my + 0.9);
+    }
+    let Y = 6.15;
+    const pt = (x: number) => this.P(x, Y);
+    for (const [a, b] of pairs.values()) {
+      Y = roadY.get([a, b].sort().join("|"))!;
+      const xa = st[a].x, xb = st[b].x;
+      ctx.strokeStyle = tc("#6b5d2a");
+      ctx.lineWidth = 3 * this.k;
+      ctx.setLineDash([8, 5]);
+      ctx.beginPath();
+      let lastBand = -1;
+      for (let i = 0; i <= 40; i++) {
+        const x = xa + ((xb - xa) * i) / 40, bd = this.bandOf(x), p = pt(x);
+        if (bd !== lastBand) ctx.moveTo(p.x, p.y); else ctx.lineTo(p.x, p.y);
+        lastBand = bd;
+      }
+      ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.font = this.sans(9, 600);
+      ctx.fillStyle = tc("#c9a93a");
+      ctx.textAlign = "center";
+      const pm = pt((xa + xb) / 2);
+      ctx.fillText("Schienenersatzverkehr (Bus)", pm.x, pm.y + 14 * this.k);
+    }
+    for (const b of ops.buses) {
+      if (now < b.dep - 600 || now > b.arr + 120) continue;
+      Y = roadY.get([b.from, b.to].sort().join("|")) ?? 6.15;
+      const f = Math.min(1, Math.max(0, (now - b.dep) / Math.max(1, b.arr - b.dep)));
+      const x = st[b.from].x + (st[b.to].x - st[b.from].x) * f;
+      const p = pt(x);
+      const w = 26 * this.k, h = 11 * this.k;
+      ctx.fillStyle = COLORS.yellow;
+      ctx.beginPath();
+      (ctx as any).roundRect ? (ctx as any).roundRect(p.x - w / 2, p.y - h / 2, w, h, 3 * this.k) : ctx.rect(p.x - w / 2, p.y - h / 2, w, h);
+      ctx.fill();
+      ctx.fillStyle = "#1a1a1a";
+      ctx.font = this.mono(7.5, 700);
+      ctx.textAlign = "center";
+      ctx.fillText(b.no.replace("SEV ", "B"), p.x, p.y + 3 * this.k);
+      ctx.fillStyle = COLORS.yellow;
+      ctx.font = this.mono(8, 600);
+      const dir = st[b.to].x > st[b.from].x ? "▸" : "◂";
+      const lbl = now < b.dep ? `${b.no} ab ${this.hhmm(b.dep)}` : now >= b.arr ? `${b.no} angekommen` : `${b.no} ${dir} an ${this.hhmm(b.arr)}`;
+      ctx.fillText(lbl, p.x, p.y - 9 * this.k);
+    }
+  }
+  private hhmm(t: number) { return `${String(Math.floor((((t % 86400) + 86400) % 86400) / 3600)).padStart(2, "0")}:${String(Math.floor(t / 60) % 60).padStart(2, "0")}`; }
+
   // Lage eines Punktes in Weltkoordinaten, dist Meter hinter der Zugspitze
   private trainPolyline(t: Train): [number, number][] {
     const pts: [number, number][] = [];
@@ -700,15 +763,19 @@ export class View {
         const P = this.P(p[0], p[1]);
         ctx.fillRect(P.x - 1, P.y - lw / 2 - 0.5, 2, lw + 1);
       }
-      // Spitze als Pfeil
+      // Spitze als Pfeil (nicht am Endbahnhof und nicht bei bereitgestellten Zügen, solange sie nicht abfahrbereit sind)
       const h = this.P(pts[0][0] - t.dir * 1e-6, pts[0][1]);
       const s = lw * 0.9;
-      ctx.fillStyle = tc("#ffffff");
-      ctx.beginPath();
-      ctx.moveTo(h.x + t.dir * s * 0.9, h.y);
-      ctx.lineTo(h.x - t.dir * s * 0.4, h.y - s * 0.75);
-      ctx.lineTo(h.x - t.dir * s * 0.4, h.y + s * 0.75);
-      ctx.fill();
+      const ending = t.dwelling && t.stopIdx === t.stops.length - 1 && !t.trip.exitPortal;
+      const notReady = t.dwelling && t.stopIdx === 0 && !t.trip.entryPortal && t.dwellUntil - this.w.time > 60;
+      if (!ending && !notReady) {
+        ctx.fillStyle = tc("#ffffff");
+        ctx.beginPath();
+        ctx.moveTo(h.x + t.dir * s * 0.9, h.y);
+        ctx.lineTo(h.x - t.dir * s * 0.4, h.y - s * 0.75);
+        ctx.lineTo(h.x - t.dir * s * 0.4, h.y + s * 0.75);
+        ctx.fill();
+      }
       if (t.fault) {
         ctx.strokeStyle = COLORS.fault;
         ctx.lineWidth = 2;

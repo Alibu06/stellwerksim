@@ -240,3 +240,6 @@ select.trk { background: #151d27; color: #fff; border: 1px solid var(--line); bo
 #tab-faults ol.steps button { margin: 3px 0 0; display: block; }
 #tab-faults .book div { font-size: 11.5px; padding: 3px 0; border-bottom: 1px solid #18212c; line-height: 1.35; }
 #tab-faults .book time { font-family: "JetBrains Mono", monospace; color: var(--dim); margin-right: 5px; } #tab-faults .book b { color: var(--accent); margin-right: 4px; }
+#card table.plan tr.turnrow td { font-family: inherit; text-align: left; padding: 8px 0 4px; color: #ffd23f; border-top: 1px dashed #3a4656; }
+#card table.plan tr.nextrip td { color: #5f6f82; opacity: .8; }
+#card table.plan small.op { color: #4d8dff; font-family: inherit; }

@@ -5,6 +5,7 @@ import { Dir, Graph } from "./graph";
 export type Cat = "S" | "RE" | "RB" | "ICE" | "G";
 
 export interface TTStop {
+  op?: "kuppeln" | "trennen"; // Fahrzeugeinheit beistellen oder abhängen
   st: string;
   arr: number;
   dep: number;
