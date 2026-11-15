@@ -960,7 +960,8 @@ export class World {
       const p = paths[i];
       const c = costs[i];
       // Deutlich schlechtere Umwege (z. B. lange Gegengleisfahrt) nicht wählen, lieber warten
-      if (c > ideal * 1.25 + 800) continue;
+      // (wartet der Zug schon länger, sind auch Umwege und andere Gleise recht)
+      if (c > ideal * 1.25 + 800 + (t.waitRed > 120 ? 3000 : 0)) continue;
       if (this.singleTrackBlocked(t, p)) continue;
       if (p.endPortal && this.zugmeldung && !this.outAccepted(t)) continue;
       if (this.il.check(p)) continue;
@@ -1060,7 +1061,9 @@ export class World {
     const n = this.g.nodes[P.outNode];
     const e = this.g.edges[[...n.east, ...n.west][0]];
     if (!e.occ) return false;
-    return p.edges.some((x) => this.g.edges[x].platform) || p.endPortal === ex;
+    // nur der Bahnhof direkt vor der eingleisigen Strecke ist betroffen, nicht alle Bahnhöfe davor
+    const last = t.stops[t.stops.length - 1]?.st;
+    return p.edges.some((x) => this.g.edges[x].platform?.st === last) || p.endPortal === ex;
   }
 
   private goalKey(t: Train): string {
