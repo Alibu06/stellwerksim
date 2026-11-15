@@ -848,11 +848,14 @@ export class World {
   private lastEdgeOf(x: ShuntTarget) { const l = x.rev?.edges ?? x.edges; return this.g.edges[l[l.length - 1]]; }
   private parkAuto(t: Train): boolean {
     if (this.canShunt(t)) return false;
-    const tg = this.shuntTargets(t).filter((x) => { const E = this.lastEdgeOf(x); return !E.platform && E.len >= t.len + 15 && !this.routeEdges().has(E.id); })
-      .sort((a, b) => Number(!!this.lastEdgeOf(b).name?.startsWith("Abstell")) - Number(!!this.lastEdgeOf(a).name?.startsWith("Abstell")))[0];
+    const tg = this.parkTarget(t);
     if (!tg || this.startShunt(t, tg)) return false;
     t.radio.push({ t: this.time, from: "tf", text: `${t.no}: Ich rangiere zum Abstellen nach ${tg.label}.` });
     return true;
+  }
+  parkTarget(t: Train): ShuntTarget | undefined {
+    return this.shuntTargets(t).filter((x) => { const E = this.lastEdgeOf(x); return !E.platform && E.len >= t.len + 15 && !this.routeEdges().has(E.id); })
+      .sort((a, b) => Number(!!this.lastEdgeOf(b).name?.startsWith("Abstell")) - Number(!!this.lastEdgeOf(a).name?.startsWith("Abstell")))[0];
   }
   // Kanten, über die irgendeine Fahrstraße führt (dort darf nichts abgestellt werden)
   private routeEdgeSet?: Set<number>;
@@ -2697,7 +2700,11 @@ export class World {
       if (isLast && t.trip.turnInto) out.push({ text: `Endstation, wendet als ${t.trip.turnInto.no}${t.reverseAt ? ` um ${clock(t.reverseAt)}` : ""}`, kind: "info" });
       else if (isLast && t.bereit) { const q = this.pending.find((x) => x.key === t.bereit); out.push({ text: `Abgestellt, wird bereitgestellt als ${q?.no ?? "?"}${q ? ` (ab ${clock(q.stops[0].dep)})` : ""}`, kind: "info" }); }
       else if (isLast && t.parked) out.push({ text: "Abgestellt, wartet auf die nächste Leistung", kind: "info" });
-      else if (isLast) out.push({ text: "Endstation, wird abgestellt", kind: "info" });
+      else if (isLast) {
+        const tg = this.canShunt(t) ? undefined : this.parkTarget(t);
+        const when = t.dissolveAt > this.time ? ` um ${clock(t.dissolveAt)}` : "";
+        out.push({ text: tg ? `Endstation, wird abgestellt: Tf rangiert${when} selbst nach ${tg.label.replace(/^.*? (Abstellgleis|Gleis|Stumpfgleis|Nebengleis)/, "$1")}. Du kannst vorher selbst rangieren (Rechtsklick auf den Zug, Rangieren nach …)` : "Endstation, kein freies Abstellgleis: Zug fährt danach ins Werk", kind: "info" });
+      }
       else if (t.stopIdx === 0 && !t.trip.entryPortal && !t.trip.turnedFrom && this.time < t.dwellUntil) out.push({ text: `Bremsprobe und Vorbereitung, abfahrbereit ca. ${clock(t.dwellUntil)}`, kind: "info" });
       else if (this.time < t.dwellUntil) out.push({ text: `Fahrgastwechsel, Abfahrt ${clock(t.dwellUntil)}`, kind: "info" });
       else if (t.nextSig && !this.il.proceeds(this.il.sig(t.nextSig), this.time)) out.push({ text: `Abfahrbereit, wartet auf Ausfahrt ${this.il.sig(t.nextSig).name}`, kind: "warn" });
