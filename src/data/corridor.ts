@@ -254,7 +254,7 @@ function finishEast(L: Layout): Graph {
   for (const [y, t] of [[4, "2"], [5, "1"], [6, "11"]] as const) {
     L.plat(51760, 52130, y, "AU", t);
     L.sig(51760, y, -1, `AU P${t}`);
-    if (y !== 6) L.sig(52130, y, 1, `AU N${t}`);
+    L.sig(52130, y, 1, `AU N${t}`); // Gl. 11: Gleisende-Signal am Stumpfgleis
   }
   L.sig(51850, 3, -1, "AU P31"); L.sig(52150, 3, 1, "AU N31");
   L.xo(52420, 4, 5, 80); L.xo(52520, 5, 4, 80);

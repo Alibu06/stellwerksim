@@ -585,6 +585,7 @@ export class World {
         s.done = true;
         this.tripDone(t);
       }
+      if (s.actArr !== undefined && this.time - s.actArr > 30 && this.time - s.actArr < 32) this.il.releaseOverlapForTrain(t.id);
       if (t.trip.turnInto && this.time >= t.reverseAt) this.reverse(t, t.trip.turnInto);
       else if (!t.trip.turnInto && this.time >= t.dissolveAt) {
         for (const e of t.body) this.vacate(e);
@@ -594,6 +595,8 @@ export class World {
       }
       return;
     }
+    // Durchrutschweg hinter dem Bahnsteig nach 30 s Stillstand auflösen, damit die Weichen dahinter frei werden
+    if (s.actArr !== undefined && this.time - s.actArr > 30 && this.time - s.actArr < 32) this.il.releaseOverlapForTrain(t.id);
     if (this.time < t.dwellUntil || t.hold) return;
     s.done = true;
     s.actDep = this.time;
