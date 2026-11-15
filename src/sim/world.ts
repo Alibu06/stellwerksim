@@ -9,6 +9,7 @@ export interface StopState extends TTStop {
   actArr?: number;
   actDep?: number;
   plan?: string; // Regelgleis laut Fahrplan
+  disp?: string; // dispositiv angeordnetes Gleis (Gleisänderung)
   track?: string; // tatsächlich benutztes Gleis
 }
 
@@ -176,6 +177,7 @@ export class World {
     if (this.zlTimer >= 2) {
       this.zlTimer = 0;
       this.autoRoutes();
+      this.queueTick();
     }
   }
 
@@ -204,6 +206,7 @@ export class World {
       stopAheadIsPlatform: false, waitRed: 0, standStill: 0, reverseAt: 0, dissolveAt: 0, faultUntil: 0, sight: false, hold: false, causes: trip.initialDelay > 60 ? { "Verspätung aus dem Vorbereich": trip.initialDelay } : {}, extraDwell: 0, radio: [], ...this.crew(trip),
     };
     this.ext.applyPerf(t);
+    for (const st of t.stops) st.disp = this.dispTrack.get(`${trip.key}|${st.st}`);
     for (const e of body) this.g.edges[e].occ++;
     this.trains.push(t);
     return t;
@@ -554,9 +557,10 @@ export class World {
     t.dwelling = true;
     s.actArr = startHere ? s.arr : this.time;
     s.track = this.headEdge(t).platform?.track ?? this.g.edges[t.body[t.body.length - 1]].platform?.track;
-    if (!startHere && s.plan && s.track && s.track !== s.plan && t.cat !== "G" && this.manualAreas.has(s.st)) {
+    const soll = s.disp ?? s.plan;
+    if (!startHere && soll && s.track && s.track !== soll && t.cat !== "G" && this.manualAreas.has(s.st)) {
       this.score.trackChanges = (this.score.trackChanges ?? 0) + 1;
-      this.log(`Gleisänderung: ${t.no} hält in ${this.g.stations[s.st].name} heute auf Gleis ${s.track} statt ${s.plan}`, "info");
+      this.log(`Gleisänderung: ${t.no} hält in ${this.g.stations[s.st].name} heute auf Gleis ${s.track} statt ${soll}`, "info");
     }
     if (!startHere) t.delay = Math.max(0, this.time - s.arr);
     const minDwell = t.cat === "ICE" ? 90 : t.cat === "G" ? 0 : 30;
@@ -1090,6 +1094,9 @@ export class World {
       c += E.len * (E.pref && E.pref !== p.dir ? 3 : 1);
       if (E.platform && goal === `st:${E.platform.st}`) {
         if (E.len < t.len - 10) c += 5000;
+        const stp = t.stops.find((x) => !x.done && x.st === E.platform!.st);
+        if (stp?.disp && stp.disp !== E.platform.track) return 1e9; // angeordnetes Gleis abwarten
+        if (stp && !stp.disp && stp.plan && stp.plan !== E.platform.track) c += 300; // Regelgleis bevorzugen
         return c + (p.diverging ? 30 : 0) + this.costAfter(t, E.id, p.dir);
       }
     }
@@ -1281,6 +1288,58 @@ export class World {
     this.log(`Zugmeldung: ${r.no} von ${this.g.portals[r.portal].label} angenommen`, "info");
     return null;
   }
+
+  // ---------------- Fahrstraßenspeicher (vorgemerkte Fahrstraßen) ----------------
+  queued: { start: number; end: number | string; t: number }[] = [];
+  canQueue(why: string) { return !/Keine Fahrstraße|endet hier|gesperrt \(|ist gesperrt|Annäherung/.test(why); }
+  queueRoute(start: number, end: number | string): string | null {
+    if (this.queued.some((q) => q.start === start)) return `Ab ${this.il.sig(start).name} ist schon eine Fahrstraße vorgemerkt`;
+    this.queued.push({ start, end, t: this.time });
+    const en = typeof end === "string" ? this.g.portals[end].label : this.il.sig(end).name;
+    this.log(`Fahrstraße ${this.il.sig(start).name} → ${en} vorgemerkt`, "info");
+    return null;
+  }
+  unqueue(start: number) { this.queued = this.queued.filter((q) => q.start !== start); }
+  queuedPath(q: { start: number; end: number | string }): PathDef | undefined {
+    const c = (this.il.paths.get(q.start) ?? []).filter((p) => (typeof q.end === "string" ? p.endPortal === q.end : p.endSig === q.end));
+    return c.sort((a, b) => Number(a.diverging) - Number(b.diverging) || a.len - b.len)[0];
+  }
+  private queueTick() {
+    for (const q of [...this.queued]) {
+      if (this.il.sig(q.start).route) continue; // erst wenn die vorige Fahrstraße ab diesem Signal aufgelöst ist
+      const why = this.setRoute(q.start, q.end);
+      if (why && this.canQueue(why)) continue;
+      this.queued = this.queued.filter((x) => x !== q);
+      const en = typeof q.end === "string" ? this.g.portals[q.end].label : this.il.sig(q.end).name;
+      this.log(why ? `Vorgemerkte Fahrstraße ${this.il.sig(q.start).name} → ${en} verworfen: ${why}` : `Vorgemerkte Fahrstraße ${this.il.sig(q.start).name} → ${en} eingestellt`, why ? "warn" : "good");
+    }
+  }
+
+  // ---------------- Gleisänderung (Disposition) ----------------
+  dispTrack = new Map<string, string>(); // "Fahrt-Schlüssel|Bahnhof" -> Gleis
+  platformTracks(st: string): { track: string; len: number }[] {
+    const m = new Map<string, number>();
+    for (const e of this.g.edges) if (e.platform?.st === st) m.set(e.platform.track, Math.max(m.get(e.platform.track) ?? 0, e.len));
+    return [...m].map(([track, len]) => ({ track, len })).sort((a, b) => (parseInt(a.track) || 99) - (parseInt(b.track) || 99));
+  }
+  setTrack(tripKey: number, st: string, track: string | undefined): string | null {
+    const t = this.trains.find((x) => x.trip.key === tripKey);
+    const trip = t?.trip ?? this.allPending().find((x) => x.key === tripKey);
+    if (!trip) return "Zug nicht gefunden";
+    const stop = t ? t.stops.find((x) => x.st === st && !x.done) : trip.stops.find((x) => x.st === st);
+    if (!stop) return "Halt schon vorbei";
+    if (t && t.dwelling && t.stops[t.stopIdx] === stop) return "Zug steht bereits am Bahnsteig";
+    if (track && !this.platformTracks(st).some((x) => x.track === track)) return "Gleis gibt es dort nicht";
+    const k = `${tripKey}|${st}`;
+    const plan = (stop as StopState).plan ?? this.planTrack(st, trip.dir, trip.line, trip.to);
+    if (!track || track === plan) this.dispTrack.delete(k);
+    else this.dispTrack.set(k, track);
+    if (t) (stop as StopState).disp = this.dispTrack.get(k);
+    const name = this.g.stations[st].name;
+    this.log(track && track !== plan ? `Gleisänderung angeordnet: ${trip.no} hält in ${name} auf Gleis ${track} statt ${plan ?? "?"}` : `Gleisänderung aufgehoben: ${trip.no} hält in ${name} wieder auf Gleis ${plan ?? "?"}`, "info");
+    return null;
+  }
+  allPending(): TripSpec[] { return this.pending; }
 
   // Anschluss halten: Abbringer wartet am Umsteigebahnhof
   holdConnection(id: number): string | null {

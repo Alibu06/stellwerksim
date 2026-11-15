@@ -26,6 +26,13 @@ const hm = (t: number) => {
   const s = Math.floor(((t % 86400) + 86400) % 86400);
   return `${String(Math.floor(s / 3600)).padStart(2, "0")}:${String(Math.floor(s / 60) % 60).padStart(2, "0")}`;
 };
+// Gleisanzeige: Regelgleis durchgestrichen, wenn ein anderes Gleis angeordnet oder benutzt wird
+export function trackHtml(s: { plan?: string; disp?: string; track?: string }): string {
+  const soll = s.disp ?? s.plan;
+  if (s.track && soll && s.track !== soll) return `<s>${s.plan ?? soll}</s> <b class="chg">${s.track}</b>`;
+  if (s.disp && s.plan && s.disp !== s.plan) return `<s>${s.plan}</s> <b class="chg">${s.disp}</b>`;
+  return s.track ?? soll ?? "–";
+}
 const esc = (s: string) => s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]!));
 
 export class TrainWindow {
@@ -74,7 +81,14 @@ export class TrainWindow {
     let body = "";
     if (this.tab === "info") {
       const st = w.status(t);
+      const nx = t.stops[t.stopIdx];
+      const nxDelay = nx ? Math.round((w.eta(t, nx) - nx.arr) / 60) : 0;
+      const depProg = nx ? Math.max(nx.dep, w.eta(t, nx) + (nx.dep - nx.arr)) : 0;
+      const nextHtml = !nx || nx.done ? (t.trip.exitPortal ? `<div class="nexthalt">Kein Halt mehr im Bereich · weiter Richtung ${esc(g.portals[t.trip.exitPortal].label)}</div>` : "")
+        : `<div class="nexthalt"><small>${t.dwelling ? "Hält in" : "Nächster Halt"}</small><b>${esc(g.stations[nx.st].name)}</b> <span class="gl">Gl. ${trackHtml(nx)}</span><br>
+          an ${hm(nx.arr)}${t.dwelling ? ` (Ist ${hm(nx.actArr ?? nx.arr)})` : nxDelay > 0 ? ` <span class="${nxDelay >= 5 ? "bad" : "warn"}">(+${nxDelay})</span>` : ""} · ab ${hm(nx.dep)}${depProg - nx.dep >= 60 ? ` <span class="warn">(Prognose ${hm(depProg)})</span>` : ""}${t.stopIdx === t.stops.length - 1 && !t.trip.exitPortal ? " · Endhalt" : ""}</div>`;
       body = `<div class="pos"><b>${pos.text[0].toUpperCase() + pos.text.slice(1)}</b><br>km ${pos.km.toFixed(2).replace(".", ",")} · ${pos.track} · Richtung ${t.dir > 0 ? "Betzdorf" : "Köln"}</div>
+        ${nextHtml}
         <ul class="status">${st.map((x) => `<li class="${x.kind}">${esc(x.text)}</li>`).join("")}</ul>
         <table class="kv">
           <tr><td>Zuggattung</td><td>${t.cat === "G" ? "Güterzug" : t.cat === "S" ? "S-Bahn" : t.cat === "ICE" ? "ICE" : t.cat === "RE" ? "Regional-Express" : "Regionalbahn"} ${t.trip.line !== t.cat ? esc(t.trip.line) : ""}</td></tr>
@@ -94,10 +108,12 @@ export class TrainWindow {
         const ist = (x: number | undefined, d: number) => (x !== undefined ? `<span class="${cls(d)}">${hm(x)}</span>` : `<span class="${cls(d)} prog">${hm(s.arr + Math.max(0, d))}</span>`);
         return `<tr class="${s.done ? "done" : i === t.stopIdx ? "cur" : ""}"><td>${esc(g.stations[s.st].name)}${s.missed ? " ✕" : ""}</td>
           <td>${hm(s.arr)}</td><td>${ist(s.actArr, dArr)}</td><td>${hm(s.dep)}</td><td>${s.actDep !== undefined ? `<span class="${cls(dDep)}">${hm(s.actDep)}</span>` : `<span class="${cls(dDep)} prog">${hm(s.dep + Math.max(0, dDep))}</span>`}</td>
-          <td>${s.track && s.plan && s.track !== s.plan ? `<s>${s.plan}</s> <span class="warn">${s.track}</span>` : s.track ?? s.plan ?? ""}</td></tr>`;
+          <td>${!s.done && t.cat !== "G" && !(t.dwelling && i === t.stopIdx) && w.platformTracks(s.st).length > 1
+            ? `<select class="trk" data-st="${s.st}">${w.platformTracks(s.st).map((p) => `<option value="${p.track}" ${(s.disp ?? s.plan) === p.track ? "selected" : ""}>${p.track}${p.track === s.plan ? " (Regel)" : ""}${p.len < t.len ? " (zu kurz)" : ""}</option>`).join("")}</select>${s.disp && s.disp !== s.plan ? ` <s>${s.plan ?? ""}</s>` : ""}`
+            : trackHtml(s)}</td></tr>`;
       }).join("");
       body = rows ? `<table class="plan"><tr><th>Halt</th><th>an Soll</th><th>an Ist/Prog</th><th>ab Soll</th><th>ab Ist/Prog</th><th>Gl.</th></tr>${rows}</table>
-        <p class="hint">Kursiv = Prognose. Grün pünktlich, gelb ab 1 min, rot ab 5 min.</p>` : `<p class="hint">Güterzug ohne Verkehrshalt im Bereich.</p>`;
+        <p class="hint">Kursiv = Prognose. Grün pünktlich, gelb ab 1 min, rot ab 5 min. Gleis ändern: Auswahl in der Spalte Gl. (Gleisänderung, Regelgleis wird durchgestrichen).</p>` : `<p class="hint">Güterzug ohne Verkehrshalt im Bereich.</p>`;
     } else if (this.tab === "fis") {
       body = this.fis(t);
     } else if (this.tab === "funk") {
@@ -155,7 +171,8 @@ export class TrainWindow {
     const ticker = dm >= 3 ? `Wir haben derzeit eine Verspätung von ${dm} Minuten${reason ? `. Grund: ${reason.replace(/^Halt vor Signal.*/, "Verzögerungen im Betriebsablauf")}` : ""}. Wir bitten um Entschuldigung.`
       : t.dwelling ? "Bitte beachten Sie beim Aussteigen die Lücke zwischen Zug und Bahnsteig." : "Willkommen an Bord. Fahrscheine bitte bereithalten.";
     const isLast = !t.trip.exitPortal && rest.length <= 1;
-    const chg = next && next.track && next.plan && next.track !== next.plan ? next.track : undefined;
+    const nsoll = next ? next.track ?? next.disp ?? next.plan : undefined;
+    const chg = next && nsoll && next.plan && nsoll !== next.plan ? nsoll : undefined;
     return `<div class="fisbox">
       <div class="fistop"><span class="fisline" style="background:${this.catColor[t.cat]}">${esc(t.trip.line)}</span><span class="fisdest">${esc(t.trip.to)}</span><span class="fisclock">${hm(w.time)}</span></div>
       ${next ? `<div class="fisnext"><small>${t.dwelling ? "Halt" : "Nächster Halt"}</small><div>${esc(g.stations[next.st].name)}</div><small>${hm(next.arr)}${dm > 0 ? ` <span class="fisdelay">+${dm}</span>` : ""}${next.plan ? ` · Gleis ${chg ? `<span class="fisdelay">${chg}</span> (Gleisänderung)` : next.plan}` : ""}${isLast ? " · Endstation, bitte alle aussteigen" : ""}</small></div>` : `<div class="fisnext"><small>Endstation</small><div>${esc(t.trip.to)}</div><small>Bitte alle aussteigen. Vielen Dank für Ihre Fahrt.</small></div>`}
@@ -182,6 +199,12 @@ export class TrainWindow {
       i.value = "";
       this.renderRadioLog();
     };
+    this.el.querySelectorAll<HTMLSelectElement>("select.trk").forEach((sel) => (sel.onchange = () => {
+      const why = this.w.setTrack(t.trip.key, sel.dataset.st!, sel.value);
+      this.toast(why ?? `Gleisänderung für ${t.no} angeordnet`);
+      sel.blur();
+      this.render(true);
+    }));
     this.el.querySelectorAll<HTMLButtonElement>("[data-a]").forEach((b) => (b.onclick = () => {
       const a = b.dataset.a;
       if (a === "center") this.onCenter?.(t);

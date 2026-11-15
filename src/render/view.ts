@@ -392,6 +392,22 @@ export class View {
       ctx.stroke();
     }
     ctx.setLineDash([]);
+    // Vorgemerkte Fahrstraßen: blau gestrichelt
+    ctx.strokeStyle = "#4f9dff";
+    ctx.lineWidth = Math.max(2, lw * 0.6);
+    ctx.setLineDash([7, 5]);
+    for (const q of this.w.queued) {
+      const p = this.w.queuedPath(q);
+      if (!p) continue;
+      ctx.beginPath();
+      for (const id of p.edges) {
+        const e = this.g.edges[id];
+        const A = this.g.nodes[e.a], B = this.g.nodes[e.b];
+        this.seg(ctx, A.x, A.y, B.x, B.y);
+      }
+      ctx.stroke();
+    }
+    ctx.setLineDash([]);
     // Langsamfahrstellen (gelb gestrichelt mit Geschwindigkeit) und gesperrte Gleise (Kreuze)
     for (const e of this.g.edges) {
       if (!e.slow && !e.closed) continue;
@@ -493,8 +509,9 @@ export class View {
       ctx.lineTo(footX, p.y + 3 * k);
       ctx.stroke();
       // Schirm (Ks-System): Hp0 rot, Ks1 grün, Ks2 gelb nur am Mehrabschnittssignal, Ks1 blinkend bei Zs3v
-      let col = asp.stop ? COLORS.red : asp.expectStop && s.combined ? COLORS.yellow : COLORS.green;
-      if (!asp.stop && !asp.expectStop && asp.zs3v && s.combined && Math.floor(this.blink * 2) % 2) col = "#145c36";
+      // Ks-Hauptsignale kündigen das nächste Hauptsignal immer mit an: gelb = Halt erwarten
+      let col = asp.stop ? COLORS.red : asp.expectStop ? COLORS.yellow : COLORS.green;
+      if (!asp.stop && !asp.expectStop && asp.zs3v && Math.floor(this.blink * 2) % 2) col = "#145c36";
       if (asp.zs1) col = Math.floor(this.blink * 2.5) % 2 ? COLORS.white : COLORS.red;
       const tip = p.x + s.dir * L * 0.5, back = p.x - s.dir * L * 0.5;
       ctx.beginPath();
@@ -545,6 +562,13 @@ export class View {
         ctx.fillStyle = COLORS.text;
         ctx.textAlign = "center";
         ctx.fillText(s.name.replace(/^[A-Z]{2} /, ""), p.x, p.y + s.dir * (Hh + 8 * k) + (s.dir > 0 ? 2 : 0));
+      }
+      if (this.zoom > 1.15 && !block) {
+        const t = asp.zs1 ? "Zs1" : asp.stop ? "Hp0" : asp.expectStop ? "Ks2" : "Ks1";
+        ctx.font = this.mono(7, 700);
+        ctx.fillStyle = asp.stop && !asp.zs1 ? COLORS.red : asp.expectStop ? COLORS.yellow : COLORS.green;
+        ctx.textAlign = "center";
+        ctx.fillText(t + (asp.zs3v && !asp.stop ? ` ${asp.zs3v}v` : ""), p.x, p.y - s.dir * (Hh + 4 * k) + (s.dir < 0 ? 6 * k : 0));
       }
       if (asp.zs3 && !asp.stop) {
         ctx.font = this.mono(8, 700);
@@ -738,6 +762,49 @@ export class View {
       ctx.textAlign = "center";
       ctx.fillText(on ? "↵" : "✂", p.x, p.y - 27 * this.k);
     }
+  }
+
+  // ---------------- Info beim Überfahren mit der Maus ----------------
+  hoverInfo(px: number, py: number): string | null {
+    const w = this.w, il = w.il;
+    let best: string | null = null, bd = 12;
+    const kmh = (z: number) => `${z * 10} km/h`;
+    for (const s of this.g.signals) {
+      const p = this.sigPos(s);
+      const d = Math.hypot(p.x - px, p.y - py);
+      if (d >= bd) continue;
+      bd = d;
+      const a = il.aspect(s, w.time);
+      const r = il.routes.get(s.route);
+      const end = r?.path.endSig ? il.sig(r.path.endSig).name : r?.path.endPortal ? this.g.portals[r.path.endPortal].label : "";
+      const kind = s.kind === "block" ? "Selbstblocksignal" : s.combined ? "Mehrabschnittssignal (Haupt- und Vorsignal)" : "Hauptsignal";
+      const lines = [`<b>${s.name}</b> · ${kind}`];
+      if (w.signalFault(s.id)) lines.push(`<span class="bad">Signalstörung: zeigt keine Fahrt</span>`);
+      if (a.zs1) lines.push(`<span class="warn">Zs 1 Ersatzsignal: am Halt zeigenden Signal vorbeifahren, auf Sicht</span>`);
+      else if (a.stop) lines.push(`<span class="bad">Hp 0: Halt</span>`);
+      else if (a.expectStop) lines.push(`<span class="warn">Ks 2: Fahrt, Halt erwarten</span> (${end} zeigt Halt)`);
+      else lines.push(`<span class="ok">Ks 1: Fahrt</span>${a.zs3v ? `, Ks 1 blinkend: am nächsten Signal ${kmh(a.zs3v)} erwarten (Zs 3v)` : ""}`);
+      if (a.zs3 && !a.stop) lines.push(`Zs 3: höchstens ${kmh(a.zs3)} ab diesem Signal`);
+      if (r) lines.push(`Fahrstraße bis ${end}${r.readyAt > w.time ? " (Weichen laufen um)" : ""}`);
+      const q = w.queued.find((x) => x.start === s.id);
+      if (q) lines.push(`<span style="color:#4f9dff">Vorgemerkt bis ${typeof q.end === "string" ? this.g.portals[q.end].label : il.sig(q.end).name}</span>`);
+      lines.push(s.auto ? "Zuglenkung: automatisch" : "Zuglenkung: aus (du stellst)");
+      const t = w.trains.find((x) => x.nextSig === s.id && x.distNextSig < 3000);
+      if (t) lines.push(`Nächster Zug: ${t.no} in ${Math.round(t.distNextSig)} m${t.waitRed > 20 ? `, wartet seit ${Math.round(t.waitRed / 60)} min` : ""}`);
+      best = lines.join("<br>");
+    }
+    if (this.zoom >= 0.55) for (const d of this.g.distants ?? []) {
+      const e = this.g.edges[d.edge];
+      const a = this.g.nodes[e.a], b = this.g.nodes[e.b];
+      const f = d.pos / e.len;
+      const P = this.P(a.x + (b.x - a.x) * f, a.y + (b.y - a.y) * f);
+      const dd = Math.hypot(P.x - px, P.y + d.dir * 8 * this.k - py);
+      if (dd >= bd) continue;
+      bd = dd;
+      const asp = il.distantAspect(d.main, w.time);
+      best = `<b>Vorsignal</b> zu ${il.sig(d.main).name}<br>${asp.expectStop ? `<span class="warn">Ks 2: Halt erwarten</span>` : asp.zs3v ? `<span class="ok">Ks 1 blinkend</span>: ${kmh(asp.zs3v)} erwarten` : `<span class="ok">Ks 1: Fahrt erwarten</span>`}`;
+    }
+    return best;
   }
 
   // ---------------- Treffertest ----------------

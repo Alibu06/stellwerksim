@@ -3,7 +3,7 @@ import { World } from "./world";
 
 // Zustand für den zweiten Monitor (über BroadcastChannel übertragen)
 
-export interface SnapStop { st: string; arr: number; dep: number; actArr?: number; actDep?: number; eta: number; track?: string; plan?: string; done: boolean; }
+export interface SnapStop { st: string; arr: number; dep: number; actArr?: number; actDep?: number; eta: number; track?: string; plan?: string; disp?: string; done: boolean; }
 export interface SnapTrain {
   id: number; no: string; cat: string; line: string; from: string; to: string; dir: number;
   s: number; v: number; delay: number; live: boolean; stops: SnapStop[]; status: string; reason?: string; entry?: number;
@@ -28,7 +28,7 @@ export function makeSnapshot(w: World, g: Graph): Snapshot {
       id: t.id, no: t.no, cat: t.cat, line: t.trip.line, from: t.trip.from, to: t.trip.to, dir: t.dir,
       s: w.headS(t), v: t.v, delay: w.liveDelay(t), live: true, status: st[0]?.text ?? "", reason: t.reason,
       stops: t.stops.map((s) => ({ st: s.st, arr: s.arr, dep: s.dep, actArr: s.actArr, actDep: s.actDep, eta: w.eta(t, s), done: s.done,
-        plan: s.plan, track: s.track ?? (t.dwelling && s === t.stops[t.stopIdx] ? g.edges[t.body[t.body.length - 1]]?.platform?.track : undefined) })),
+        plan: s.plan, disp: s.disp, track: s.track ?? (t.dwelling && s === t.stops[t.stopIdx] ? g.edges[t.body[t.body.length - 1]]?.platform?.track : undefined) })),
     };
   });
   // Züge, die bald in den Bereich kommen (für die Abfahrtstafel)
@@ -37,7 +37,7 @@ export function makeSnapshot(w: World, g: Graph): Snapshot {
       id: -trip.key, no: trip.no, cat: trip.cat, line: trip.line, from: trip.from, to: trip.to, dir: trip.dir, s: NaN, v: 0,
       delay: trip.initialDelay, live: false, status: trip.entryPortal ? `erwartet von ${g.portals[trip.entryPortal].label}` : "wird bereitgestellt",
       entry: trip.entryTime + trip.initialDelay,
-      stops: trip.stops.map((s) => ({ st: s.st, arr: s.arr, dep: s.dep, eta: s.arr + trip.initialDelay, done: false, plan: w.planTrack(s.st, trip.dir, trip.line, trip.to) })),
+      stops: trip.stops.map((s) => ({ st: s.st, arr: s.arr, dep: s.dep, eta: s.arr + trip.initialDelay, done: false, plan: w.planTrack(s.st, trip.dir, trip.line, trip.to), disp: w.dispTrack.get(`${trip.key}|${s.st}`) })),
     });
   }
   return {

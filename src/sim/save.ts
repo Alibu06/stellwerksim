@@ -22,6 +22,8 @@ export function saveGame(w: World, meta: Omit<SaveMeta, "savedAt">): string {
     events: w.events, score: w.score, faults: w.faults,
     reports: w.reports.map((r) => ({ ...r, trip: r.trip.key })),
     connAlerts: w.connAlerts,
+    dispTrack: [...w.dispTrack],
+    queued: w.queued,
     edges: g.edges.map((e) => [e.occ, e.lock, e.overlap, e.slow ?? 0, e.closed ? 1 : 0, e.work ? 1 : 0]),
     sw: g.nodes.filter((n) => n.swSide !== undefined).map((n) => [n.id, n.swPos]),
     sigs: g.signals.map((s) => [s.route, s.auto ? 1 : 0]),
@@ -66,6 +68,8 @@ export function loadGame(w: World, json: string, allTrips: TripSpec[]) {
   w.events = d.events; w.score = d.score; w.faults = d.faults;
   w.reports = d.reports.map((r: any) => ({ ...r, trip: trip(r.trip) }));
   w.connAlerts = d.connAlerts ?? [];
+  w.dispTrack = new Map(d.dispTrack ?? []);
+  w.queued = d.queued ?? [];
   d.edges.forEach((x: number[], i: number) => {
     const e = g.edges[i];
     [e.occ, e.lock, e.overlap] = x;

@@ -2,7 +2,7 @@ import { buildCorridor } from "./data/corridor";
 import { buildTrips, RawTimetable } from "./sim/timetable";
 import { Train, World } from "./sim/world";
 import { View, CAT_COLOR as VIEW_CAT } from "./render/view";
-import { TrainWindow } from "./ui/trainWindow";
+import { TrainWindow, trackHtml } from "./ui/trainWindow";
 import { ContextMenu, MenuItem } from "./ui/contextMenu";
 import { radio } from "./sim/radio";
 import { CHANNEL, makeSnapshot } from "./sim/snapshot";
@@ -249,6 +249,7 @@ async function boot() {
       title = `Signal ${sg.name}`;
       const blocked = w.il.blockedSignals.has(sg.id);
       items.push({ label: "Fahrstraße stellen …", act: () => selectStart(sg.id) });
+      if (w.queued.some((q) => q.start === sg.id)) items.push({ label: "Vorgemerkte Fahrstraße löschen", act: () => { w.unqueue(sg.id); w.log(`Vormerkung ab ${sg.name} gelöscht`); } });
       items.push({ label: "Fahrstraße zurücknehmen", disabled: !sg.route, act: () => { const why = w.cancelRoute(sg.id); if (why) toast(why); else w.log(`Fahrstraße ab ${sg.name} zurückgenommen`); } });
       items.push({ label: sg.auto ? "Zuglenkung ausschalten" : "Zuglenkung einschalten", act: () => { sg.auto = !sg.auto; w.log(`Zuglenkung für ${sg.name} ${sg.auto ? "eingeschaltet" : "ausgeschaltet"}`); } });
       items.push({ label: "Ersatzsignal (Zs 1) geben", act: () => { const why = w.giveZs1(sg.id); if (why) toast(why); } });
@@ -295,6 +296,30 @@ async function boot() {
     flags.ctx = true;
   });
 
+  // Fahrstraße stellen, bei belegtem Fahrweg vormerken (blau gestrichelt, wird automatisch eingestellt)
+  const tryRoute = (start: number, end: number | string) => {
+    const why = w.setRoute(start, end);
+    if (!why) { flags.route = true; return; }
+    if (w.canQueue(why)) {
+      const q = w.queueRoute(start, end);
+      toast(q ?? `${why} – Fahrstraße vorgemerkt, sie wird eingestellt, sobald alles frei ist`);
+      if (!q) flags.route = true;
+    } else toast(why);
+  };
+  // Signal-Info beim Überfahren mit der Maus
+  const tip = document.createElement("div");
+  tip.id = "sigtip";
+  document.body.append(tip);
+  cv.addEventListener("mousemove", (e) => {
+    const r = cv.getBoundingClientRect();
+    const html = view.hoverInfo(e.clientX - r.left, e.clientY - r.top);
+    if (!html) { tip.style.display = "none"; return; }
+    tip.innerHTML = html;
+    tip.style.display = "block";
+    tip.style.left = `${e.clientX + 14}px`;
+    tip.style.top = `${e.clientY + 14}px`;
+  });
+  cv.addEventListener("mouseleave", () => (tip.style.display = "none"));
   const click = (x: number, y: number, shift: boolean, ctrl = false) => {
     const h = view.hit(x, y);
     if (h?.kind === "break") {
@@ -319,9 +344,7 @@ async function boot() {
     }
     if (h.kind === "portal") {
       if (view.selected) {
-        const why = w.setRoute(view.selected, h.code);
-        if (!why) flags.route = true;
-        if (why) toast(why);
+        tryRoute(view.selected, h.code);
         clearSel();
       }
       return;
@@ -342,9 +365,7 @@ async function boot() {
     if (!view.selected) return selectStart(s.id);
     if (view.selected === s.id) return clearSel();
     if (view.targets.has(`s${s.id}`)) {
-      const why = w.setRoute(view.selected, s.id);
-      if (!why) flags.route = true;
-      if (why) toast(why);
+      tryRoute(view.selected, s.id);
       clearSel();
       return;
     }
@@ -370,7 +391,7 @@ async function boot() {
     const trains = [...w.trains].sort((a, b) => Number(isMine(b.nextSig)) - Number(isMine(a.nextSig)) || b.waitRed - a.waitRed);
     setHtml($("tab-trains"), trains.map((t) => {
       const ps = t.stops[t.stopIdx];
-      const where = t.dwelling ? `hält in <b>${g.stations[ps?.st]?.name ?? ""}</b>` : ps ? `nächster Halt <b>${g.stations[ps.st].name}</b> ${hm(ps.arr)}` : t.trip.exitPortal ? `nach <b>${g.portals[t.trip.exitPortal].label}</b>` : "";
+      const where = t.dwelling ? `hält in <b>${g.stations[ps?.st]?.name ?? ""}</b>${ps ? ` Gl. ${trackHtml(ps)}` : ""}` : ps ? `nächster Halt <b>${g.stations[ps.st].name}</b> Gl. ${trackHtml(ps)} ${hm(ps.arr)}` : t.trip.exitPortal ? `nach <b>${g.portals[t.trip.exitPortal].label}</b>` : "";
       const sig = t.nextSig ? w.il.sig(t.nextSig) : null;
       const sigTxt = sig && t.distNextSig < 3000 ? ` · vor <b>${sig.name}</b>${isMine(sig.id) ? " ●" : ""}` : "";
       const dm = Math.round(t.delay / 60);
