@@ -269,6 +269,28 @@ export class World {
     return sid && (this.il.paths.get(sid)?.length ?? 0) > 0 ? 1 : 0;
   }
 
+  // Haltepunkt am Bahnsteig: so weit vor dem Ende, dass der ganze Zug zwischen die Signale passt
+  private platMargin(t: Train, platLen: number) {
+    return Math.max(2, Math.min(12, platLen - t.len - 1));
+  }
+
+  // Bremsweg bis zum Stillstand plus Sicherheitszuschlag
+  brakeDist(t: Train) {
+    return (t.v * t.v) / (2 * t.dec) + 60 + t.v * 3;
+  }
+
+  // Fahrstraße zurücknehmen mit Annäherungsverschluss
+  cancelRoute(sid: number): string | null {
+    const s = this.il.sig(sid);
+    const r = this.il.routes.get(s.route);
+    if (!r) return "Keine Fahrstraße eingestellt";
+    if (r.used) return "Fahrstraße ist schon befahren";
+    const near = this.trains.find((t) => t.nextSig === sid && t.v > 0.5 && t.distNextSig < this.brakeDist(t));
+    if (near) return `Annäherungsverschluss: ${near.no} ist zu nah und könnte nicht mehr vor dem Signal halten`;
+    this.il.cancel(sid);
+    return null;
+  }
+
   // ---------------- Fahrdynamik ----------------
   private headEdge(t: Train) {
     return this.g.edges[t.body[t.body.length - 1]];
@@ -298,7 +320,7 @@ export class World {
     const limits: { d: number; v: number }[] = [];
     if (t.exiting) return { vLimit, stopDist, limits, platformStop };
     if (ps && !t.dwelling && head.platform?.st === ps.st) {
-      stopDist = head.len - 12 - t.headPos;
+      stopDist = head.len - this.platMargin(t, head.len) - t.headPos;
       platformStop = true;
     }
     let d = head.len - t.headPos;
@@ -362,8 +384,8 @@ export class World {
         }
         limits.push({ d, v: Math.min(vEdge(NE), 40) / 3.6 });
       } else limits.push({ d, v: vEdge(NE) / 3.6 });
-      if (ps && NE.platform?.st === ps.st && d + NE.len - 12 < stopDist) {
-        stopDist = d + NE.len - 12;
+      if (ps && NE.platform?.st === ps.st && d + NE.len - this.platMargin(t, NE.len) < stopDist) {
+        stopDist = d + NE.len - this.platMargin(t, NE.len);
         platformStop = true;
         break;
       }
@@ -1082,7 +1104,7 @@ export class World {
     }
     // Signalstörung: etwa alle 120 min
     if (r() < (k * W.sig) / 120) {
-      const sg = this.g.signals.filter((x) => !this.il.faultySignals.has(x.id));
+      const sg = this.g.signals.filter((x) => !this.il.faultySignals.has(x.id) && !x.route && !this.trains.some((t) => t.nextSig === x.id && t.distNextSig < this.brakeDist(t) + 300));
       const s = sg[Math.floor(r() * sg.length)];
       const dur = 600 + Math.floor(r() * 1200);
       this.il.faultySignals.add(s.id);
@@ -1108,6 +1130,13 @@ export class World {
     if (this.il.proceeds(s, this.time)) return "Signal zeigt bereits Fahrt";
     const t = this.trains.find((t) => t.nextSig === sid && t.distNextSig < 400);
     if (!t) return "Kein Zug steht vor diesem Signal";
+    if (!s.route) {
+      // Ohne Fahrstraße nur, wenn die Weichen einen Fahrweg bilden, der nicht in eine andere Fahrstraße führt
+      const ok = (this.il.paths.get(sid) ?? []).some((p) =>
+        p.sw.every(({ node, pos }) => this.g.nodes[node].swPos === pos) &&
+        p.edges.every((e) => !this.g.edges[e].lock && !this.g.edges[e].closed));
+      if (!ok) return "Kein gesicherter Fahrweg: erst Fahrstraße einstellen (geht auch bei Signalstörung) oder Weichen passend stellen";
+    }
     this.il.zs1.set(sid, this.time + 90);
     this.log(`Ersatzsignal an ${s.name} für ${t.no}`, "info");
     return null;

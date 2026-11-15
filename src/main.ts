@@ -243,7 +243,7 @@ async function boot() {
       title = `Signal ${sg.name}`;
       const blocked = w.il.blockedSignals.has(sg.id);
       items.push({ label: "Fahrstraße stellen …", act: () => selectStart(sg.id) });
-      items.push({ label: "Fahrstraße zurücknehmen", disabled: !sg.route, act: () => { if (w.il.cancel(sg.id)) w.log(`Fahrstraße ab ${sg.name} zurückgenommen`); else toast("Fahrstraße ist schon befahren und kann nicht mehr zurückgenommen werden"); } });
+      items.push({ label: "Fahrstraße zurücknehmen", disabled: !sg.route, act: () => { const why = w.cancelRoute(sg.id); if (why) toast(why); else w.log(`Fahrstraße ab ${sg.name} zurückgenommen`); } });
       items.push({ label: sg.auto ? "Zuglenkung ausschalten" : "Zuglenkung einschalten", act: () => { sg.auto = !sg.auto; w.log(`Zuglenkung für ${sg.name} ${sg.auto ? "eingeschaltet" : "ausgeschaltet"}`); } });
       items.push({ label: "Ersatzsignal (Zs 1) geben", act: () => { const why = w.giveZs1(sg.id); if (why) toast(why); } });
       items.push({ label: blocked ? "Signalsperre aufheben" : "Signal sperren", act: () => { blocked ? w.il.blockedSignals.delete(sg.id) : w.il.blockedSignals.add(sg.id); w.log(`${sg.name} ${blocked ? "entsperrt" : "gesperrt"}`); } });

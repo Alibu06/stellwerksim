@@ -33,6 +33,8 @@ export class TrainWindow {
   train: Train | null = null;
   tab = "info";
   private lastRadio = -1;
+  private lastHtml = "";
+  private lastTab = "";
 
   constructor(private w: World, private g: Graph, private catColor: Record<string, string>, private onClose: () => void, private toast: (s: string) => void) {
     this.el = document.getElementById("card")!;
@@ -111,7 +113,23 @@ export class TrainWindow {
         <input id="reasonNote" placeholder="Bemerkung (optional)" value="${esc(t.reasonNote ?? "")}">
         <div class="tact"><button data-a="reason">Speichern</button></div>`;
     }
-    this.el.innerHTML = head + `<div class="tbody">${body}</div>`;
+    const html = head + `<div class="tbody">${body}</div>`;
+    if (!full && html === this.lastHtml) return;
+    // Fahrgastinfo: nur geänderte Teile tauschen, damit das Laufband nicht ständig neu startet
+    const box = this.el.querySelector(".fisbox");
+    if (!full && this.tab === "fis" && box && this.lastTab === "fis") {
+      const tmp = document.createElement("div");
+      tmp.innerHTML = body;
+      for (const sel of [".fistop", ".fisnext", ".fislist", ".fisticker"]) {
+        const a = box.querySelector(sel), b = tmp.querySelector(sel);
+        if (a && b && a.innerHTML !== b.innerHTML) a.replaceWith(b);
+      }
+      this.lastHtml = html;
+      return;
+    }
+    this.lastHtml = html;
+    this.lastTab = this.tab;
+    this.el.innerHTML = html;
     this.bind();
     if (this.tab === "funk") this.renderRadioLog();
   }

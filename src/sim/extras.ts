@@ -396,7 +396,7 @@ export class Extras {
     }
     if (closed) {
       // noch nicht befahrene Fahrstraßen in den gesperrten Bereich zurücknehmen
-      for (const r of [...w.il.routes.values()]) if (!r.used && r.path.edges.some((e) => set.has(e))) w.il.cancel(r.path.sig);
+      for (const r of [...w.il.routes.values()]) if (!r.used && r.path.edges.some((e) => set.has(e))) w.cancelRoute(r.path.sig);
     }
   }
 
