@@ -6,6 +6,7 @@ import { TrainWindow } from "./ui/trainWindow";
 import { ContextMenu, MenuItem } from "./ui/contextMenu";
 import { radio } from "./sim/radio";
 import { CHANNEL, makeSnapshot } from "./sim/snapshot";
+import { Tutorial } from "./ui/tutorial";
 import { SAVE_KEY, loadGame, readSave, saveGame } from "./sim/save";
 import { DEFAULT_FEATURES, FEATURE_LABELS, Features, WX } from "./sim/extras";
 
@@ -39,8 +40,10 @@ async function boot() {
     $("resume").classList.remove("hidden");
     $("resume").innerHTML = `Gespeicherten Dienst fortsetzen<small>Spielzeit ${hm(save.time)} Uhr, gespeichert ${new Date(save.meta.savedAt).toLocaleString("de-DE", { dateStyle: "short", timeStyle: "short" })}</small>`;
   }
+  let withTut = false;
   const resume = await new Promise<boolean>((res) => {
     $("go").onclick = () => res(false);
+    $("goTut").onclick = () => { withTut = true; res(false); };
     $("resume").onclick = () => res(true);
   });
   const startHour = Number(($("startHour") as HTMLSelectElement).value);
@@ -115,6 +118,8 @@ async function boot() {
     }
   };
   setInterval(() => doSave(true), 60000);
+  // Merker für das Tutorial
+  const flags = { train: false, ctx: false, route: false, accept: false, fast: false, faultsTab: false, monitor: false };
   window.addEventListener("beforeunload", () => doSave(true));
 
   const cv = $("cv") as HTMLCanvasElement;
@@ -145,6 +150,7 @@ async function boot() {
 
   let speed = 1;
   const setSpeed = (s: number) => {
+    if (s > 1) flags.fast = true;
     speed = s;
     document.querySelectorAll("#speed button").forEach((b) => b.classList.toggle("on", Number((b as HTMLElement).dataset.s) === s));
   };
@@ -280,6 +286,7 @@ async function boot() {
       items.push({ label: `Länge ${E.len} m · zulässig ${E.vmax} km/h`, disabled: true });
     } else return;
     ctxMenu.show(e.clientX, e.clientY, title, items);
+    flags.ctx = true;
   });
 
   const click = (x: number, y: number, shift: boolean, ctrl = false) => {
@@ -307,6 +314,7 @@ async function boot() {
     if (h.kind === "portal") {
       if (view.selected) {
         const why = w.setRoute(view.selected, h.code);
+        if (!why) flags.route = true;
         if (why) toast(why);
         clearSel();
       }
@@ -329,6 +337,7 @@ async function boot() {
     if (view.selected === s.id) return clearSel();
     if (view.targets.has(`s${s.id}`)) {
       const why = w.setRoute(view.selected, s.id);
+      if (!why) flags.route = true;
       if (why) toast(why);
       clearSel();
       return;
@@ -343,6 +352,7 @@ async function boot() {
     view.centerOn(g.nodes[e.a].x, g.nodes[e.a].y);
   };
   const showTrain = (t: Train) => {
+    flags.train = true;
     view.focusTrain = t;
     tw.show(t);
   };
@@ -364,6 +374,7 @@ async function boot() {
     }).join("");
     $("tab-next").querySelectorAll<HTMLButtonElement>("[data-acc]").forEach((b) => (b.onclick = () => {
       const why = w.acceptReport(Number(b.dataset.acc));
+      if (!why) flags.accept = true;
       if (why) toast(why);
       renderLists();
     }));
@@ -502,6 +513,36 @@ async function boot() {
     if ((e.ctrlKey || e.metaKey) && e.key === "s") { e.preventDefault(); doSave(); }
   });
   $("endBtn").onclick = () => { setSpeed(0); showReport(); };
+
+  // ---------- Tutorial ----------
+  const tabBtn = (tab: string) => document.querySelector<HTMLButtonElement>(`.tabs button[data-tab="${tab}"]`)!;
+  const mySig = () => {
+    // Zug, der in deinem Bereich auf ein Hauptsignal zufährt oder davor wartet
+    const cand = w.trains.filter((t) => t.nextSig && isMine(t.nextSig) && t.distNextSig < 3000).sort((a, b) => b.waitRed - a.waitRed || a.distNextSig - b.distNextSig);
+    const t = cand[0];
+    if (!t) return null;
+    const n = g.nodes[w.il.sig(t.nextSig).node];
+    return { x: n.x, y: n.y };
+  };
+  let centered = false;
+  const tut = new Tutorial([
+    { title: "Willkommen im Stellwerk", text: "Du bist Fahrdienstleiter für die Strecke von Porz-Wahn über Troisdorf und Siegburg bis Betzdorf. Züge fahren nach echtem Fahrplan. Deine Aufgabe: Fahrstraßen stellen, damit alle Züge pünktlich und sicher durchkommen. Das Spiel läuft während des Tutorials weiter, mit Leertaste kannst du jederzeit pausieren." },
+    { title: "Das Gleisbild", text: "Rote Linien sind besetzte Gleise, grüne Linien festgelegte Fahrstraßen. Züge sind farbige Balken mit weißer Spitze in Fahrtrichtung, die Kästchen zeigen die Zugnummer. Mit dem Mausrad zoomst du, mit gedrückter Maus verschiebst du das Bild.", target: "#cv" },
+    { title: "Einen Zug ansehen", text: "Klicke auf einen Zug (Balken oder Nummernkästchen) oder in der Liste rechts auf eine Zeile. Es öffnet sich das Zugfenster mit Position, Fahrplan, Fahrgastinfo und Funk.", target: "#tab-trains", done: () => flags.train, enter: () => tabBtn("trains").click() },
+    { title: "Fahrstraße stellen", text: "Der pulsierende Kreis zeigt ein Signal, vor dem ein Zug steht oder auf das er zufährt. Klicke das Signal an, dann eines der blau markierten Zielsignale. Die Weichen stellen sich, das Signal geht auf Fahrt.", mark: () => {
+      const p = mySig();
+      if (p && !centered) { view.centerOn(p.x, p.y); centered = true; }
+      return p;
+    }, done: () => flags.route },
+    { title: "Zugmeldungen", text: "Züge von außerhalb bietet dir der Nachbar-Fahrdienstleiter an. Unter „Zugmeldungen“ nimmst du sie mit „Annehmen“ an, sonst dürfen sie nicht einfahren. Ausfahrende Züge bietest du automatisch an.", target: '.tabs button[data-tab="next"]', done: () => flags.accept || !w.zugmeldung || !w.reports.some((r) => r.kind === "in" && r.state === "offered"), enter: () => tabBtn("next").click() },
+    { title: "Rechtsklick-Menü", text: "Klicke mit der rechten Maustaste auf ein Signal, eine Weiche, ein Gleis oder einen Zug. Dort findest du Fahrstraße zurücknehmen, Ersatzsignal, Langsamfahrstelle, Gleissperrung, Funk, Anschluss abwarten und Rangieren.", target: "#cv", done: () => flags.ctx },
+    { title: "Zeitraffer", text: "Oben stellst du die Geschwindigkeit ein. Probier 4× aus. Mit ❚❚ oder der Leertaste pausierst du.", target: "#speed", done: () => flags.fast },
+    { title: "Störungen und Ereignisse", text: "Im Reiter „Störungen“ stehen gestörte Weichen und Signale, Bahnübergänge, Baustellen, Ereignisse wie Feuerwehreinsätze und gefährdete Anschlüsse. Bei einer Signalstörung gibst du ein Ersatzsignal (Strg + Klick auf das Signal).", target: '.tabs button[data-tab="faults"]', enter: () => tabBtn("faults").click() },
+    { title: "Zweiter Monitor und Bericht", text: "🖥 Monitor öffnet ein eigenes Fenster mit Abfahrtstafel (Soll, Prognose, Ist) und Bildfahrplan, ideal für einen zweiten Bildschirm. 💾 speichert den Dienst, 🏁 Bericht zeigt die Schichtauswertung mit Verspätungsursachen.", target: "#monBtn" },
+    { title: "Los geht's", text: "Das war's. Alle Erklärungen findest du jederzeit unter „Hilfe“, dort kannst du das Tutorial auch neu starten. Gute Schicht!", enter: () => tabBtn("help").click() },
+  ], (p) => (view.mark = p));
+  $("tutBtn").onclick = () => { centered = false; tut.start(); };
+  if (withTut) setTimeout(() => tut.start(), 400);
 
   // ---------- Zweiter Monitor ----------
   const ch = new BroadcastChannel(CHANNEL);

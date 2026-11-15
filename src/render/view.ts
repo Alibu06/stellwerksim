@@ -259,7 +259,17 @@ export class View {
     this.drawPortals(ctx);
     this.drawTrainLabels(ctx);
     if (this.editBreaks) this.drawBreakEditor(ctx);
+    if (this.mark) {
+      const p = this.P(this.mark.x, this.mark.y);
+      const r = (14 + 6 * Math.sin(performance.now() / 180)) * this.k;
+      ctx.strokeStyle = "#4fc3ff";
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, r, 0, Math.PI * 2);
+      ctx.stroke();
+    }
   }
+  mark: { x: number; y: number } | null = null;
 
   private get k() { return Math.min(Math.max(this.zoom * 1.15, 0.85), 1.6); }
   private mono(px: number, weight = 500) { return `${weight} ${Math.round(px * this.k)}px "JetBrains Mono", ui-monospace, Menlo, monospace`; }

@@ -48,6 +48,30 @@
         <section id="tab-faults" class="tab"></section>
         <section id="tab-area" class="tab"></section>
         <section id="tab-help" class="tab">
+<button id="tutBtn" class="tutstart">▶ Tutorial starten</button>
+          <h3>Symbole im Gleisbild</h3>
+          <div class="legend">
+            <div><svg width="34" height="22" viewBox="0 0 34 22"><line x1="4" y1="18" x2="30" y2="18" stroke="#5b6b7d" stroke-width="3"/><line x1="10" y1="18" x2="10" y2="8" stroke="#8597ab" stroke-width="1.5"/><polygon points="10,3 20,8 10,13" fill="#ff4d57"/></svg><span><b>Hauptsignal Halt</b> (Hp 0)</span></div>
+            <div><svg width="34" height="22" viewBox="0 0 34 22"><line x1="4" y1="18" x2="30" y2="18" stroke="#5b6b7d" stroke-width="3"/><line x1="10" y1="18" x2="10" y2="8" stroke="#8597ab" stroke-width="1.5"/><polygon points="10,3 20,8 10,13" fill="#2fd27a"/></svg><span><b>Fahrt</b> (Ks 1)</span></div>
+            <div><svg width="34" height="22" viewBox="0 0 34 22"><line x1="4" y1="18" x2="30" y2="18" stroke="#5b6b7d" stroke-width="3"/><line x1="10" y1="18" x2="10" y2="8" stroke="#8597ab" stroke-width="1.5"/><polygon points="10,3 20,8 10,13" fill="#ffd23f"/></svg><span><b>Fahrt, Halt erwarten</b> (Ks 2, Mehrabschnittssignal)</span></div>
+            <div><svg width="34" height="22" viewBox="0 0 34 22"><line x1="4" y1="18" x2="30" y2="18" stroke="#5b6b7d" stroke-width="3"/><polygon points="17,4 22,9 17,14 12,9" fill="#ffd23f"/></svg><span><b>Vorsignal</b>: Halt erwarten</span></div>
+            <div><svg width="34" height="22" viewBox="0 0 34 22"><line x1="4" y1="18" x2="30" y2="18" stroke="#5b6b7d" stroke-width="3"/><polygon points="17,4 22,9 17,14 12,9" fill="#2fd27a"/></svg><span><b>Vorsignal</b>: Fahrt erwarten</span></div>
+            <div><svg width="34" height="22"><line x1="2" y1="11" x2="32" y2="11" stroke="#2fd27a" stroke-width="3"/></svg><span>Fahrstraße festgelegt</span></div>
+            <div><svg width="34" height="22"><line x1="2" y1="11" x2="32" y2="11" stroke="#ff4d57" stroke-width="3"/></svg><span>Gleis besetzt</span></div>
+            <div><svg width="34" height="22"><line x1="2" y1="11" x2="24" y2="11" stroke="#22c55e" stroke-width="6" stroke-linecap="round"/><rect x="12" y="7" width="2" height="8" fill="#0c1015"/><polygon points="24,6 32,11 24,16" fill="#fff"/></svg><span>Zug mit Spitze, Striche = Fahrzeugeinheiten</span></div>
+            <div><svg width="34" height="22"><line x1="2" y1="14" x2="32" y2="14" stroke="#5b6b7d" stroke-width="3"/><line x1="2" y1="8" x2="32" y2="8" stroke="#ffd23f" stroke-width="1.5" stroke-dasharray="5 4"/></svg><span>Langsamfahrstelle (La), „Bau“ = Baustelle</span></div>
+            <div><svg width="34" height="22"><line x1="2" y1="11" x2="32" y2="11" stroke="#5b6b7d" stroke-width="3"/><path d="M13 7 L21 15 M21 7 L13 15" stroke="#ff9f1c" stroke-width="2"/></svg><span>Gleis gesperrt</span></div>
+            <div><svg width="34" height="22"><line x1="2" y1="11" x2="32" y2="11" stroke="#5b6b7d" stroke-width="3"/><path d="M14 2 V20 M20 2 V20" stroke="#ffd23f" stroke-width="1.5"/></svg><span>Bahnübergang (gelb geschlossen, grau offen, blinkend gestört)</span></div>
+            <div><svg width="34" height="22"><circle cx="17" cy="11" r="3" fill="#8597ab"/><line x1="4" y1="11" x2="30" y2="11" stroke="#5b6b7d" stroke-width="3"/><line x1="17" y1="11" x2="30" y2="4" stroke="#5b6b7d" stroke-width="3"/></svg><span>Weiche (Klick stellt um)</span></div>
+          </div>
+          <h3>So läuft eine Zugfahrt</h3>
+          <ol class="steps">
+            <li>Der Nachbar bietet den Zug an, du nimmst ihn unter „Zugmeldungen“ an.</li>
+            <li>Der Zug fährt ein und nähert sich deinem Einfahrsignal (Meldung unten rechts).</li>
+            <li>Du klickst das Einfahrsignal, dann das Ausfahrsignal am gewünschten Bahnsteiggleis (Regelgleis steht im Fahrplan des Zuges).</li>
+            <li>Nach dem Halt stellst du die Ausfahrt zum nächsten Signal oder Streckenende.</li>
+            <li>Hinter dem Zug lösen sich die Fahrstraßen von selbst auf.</li>
+          </ol>
           <h3>Bedienung</h3>
           <p><b>Fahrstraße stellen:</b> Startsignal anklicken, dann eines der blau markierten Zielsignale (oder ein Streckenende).</p>
           <p><b>Ersatzsignal:</b> Strg + Klick (Mac: Cmd/Alt + Klick) auf ein Halt zeigendes Signal, vor dem ein Zug steht. Der Zug fährt mit höchstens 40 km/h auf Sicht bis zum nächsten Signal. Nur nutzen, wenn der Fahrweg wirklich frei ist.</p>
@@ -57,8 +81,14 @@
           <p><b>Zugfenster:</b> Klick auf einen Zug. Übersicht mit genauer Position (Streckenkilometer, Gleis) und allen Zuständen, Fahrplan mit Soll, Prognose und Ist (grün/gelb/rot), Fahrgastinformation wie im Fahrzeug, Funk und Verspätungsursachen.</p>
           <p><b>Funk:</b> Knöpfe für häufige Aufträge oder freier Text, z. B. „Warum stehen Sie?“, „Wie voll ist der Zug?“, „Warten Sie 5 min auf den Anschluss“, „Fahren Sie auf Sicht“. Die Antworten richten sich nach der echten Lage des Zuges.</p>
           <p><b>Ansicht:</b> Oben die Anzahl der Zeilen wählen oder mit „Einteilen“ selbst bestimmen, wo die Strecke umbricht. ⤢ passt alles auf den Bildschirm. Mausrad zoomt, Ziehen verschiebt.</p>
-          <h3>Störungen</h3>
+          <p><b>Rangieren:</b> Züge, die bei dir enden, kannst du per Rechtsklick auf ein Neben- oder Stumpfgleis im Bahnhof abstellen. Sonst blockieren sie das Bahnsteiggleis etwa 10 Minuten.</p>
+          <p><b>Gegengleis:</b> Auf zweigleisigen Abschnitten kannst du Fahrstraßen auch über das Gegengleis stellen, etwa um einen liegengebliebenen Zug zu umfahren.</p>
+          <p><b>Speichern:</b> 💾 oder Strg+S. Der Dienst wird außerdem jede Minute automatisch gespeichert und kann beim nächsten Start fortgesetzt werden.</p>
+          <h3>Störungen und Ereignisse</h3>
           <p>Weichenstörung: Weiche lässt sich nicht umstellen, plane einen anderen Fahrweg. Signalstörung: Signal zeigt keine Fahrt, Ersatzsignal geben. Tür- und Fahrzeugstörungen halten Züge einige Minuten auf.</p>
+          <p>Gestörter Bahnübergang: Züge halten davor und fahren mit Schrittgeschwindigkeit darüber. Feuerwehreinsatz, Baum im Gleis oder liegengebliebener Pkw sperren die Strecke, Personen im Gleis bedeuten Fahrt auf Sicht. Notarzt- und Polizeieinsätze halten einen Zug am Bahnsteig fest.</p>
+          <p><b>Wetter:</b> Regen und Laub verlängern Bremswege, Laub verringert auch die Anfahrbeschleunigung. Bei Schnee frieren Weichen öfter ein, bei Sturm fahren alle Züge höchstens 120 km/h, bei Gewitter fallen öfter Signale aus.</p>
+          <p><b>Anschlüsse:</b> Droht ein Anschluss zu platzen, erscheint er unter „Störungen“. Du entscheidest, ob der Anschlusszug wartet.</p>
           <h3>Farben</h3>
           <p><span class="sw" style="background:#2fd27a"></span> Fahrstraße festgelegt &nbsp; <span class="sw" style="background:#ff4d57"></span> Gleis besetzt &nbsp; <span class="sw" style="background:#1d7a4a"></span> Durchrutschweg</p>
           <p><b>Hauptsignal</b> (Dreieck mit Mast): rot = Halt, grün = Fahrt. Ist es zugleich Vorsignal für das nächste Hauptsignal (Mehrabschnittssignal), zeigt es gelb = Halt erwarten, grün blinkend = Geschwindigkeitsbeschränkung erwarten. Kleine Dreiecke ohne Namen sind Selbstblocksignale auf der freien Strecke.</p>
@@ -99,6 +129,7 @@
         <p class="hint">Wähle, welche Bahnhöfe du selbst stellst. Der Rest läuft über die automatische Zuglenkung.</p>
         <div id="areaPick" class="areas"></div>
         <button id="go">Dienst beginnen</button>
+        <button id="goTut" class="sec">Mit Tutorial beginnen (empfohlen beim ersten Mal)</button>
         <button id="resume" class="hidden"></button>
       </div>
     </div>
