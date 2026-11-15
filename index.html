@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Stellwerk Sieg</title>
     <link rel="stylesheet" href="/src/style.css" />
+    <link rel="stylesheet" href="/src/light.css" />
   </head>
   <body>
     <header id="bar">
@@ -23,7 +24,7 @@
         <button id="editBtn" title="Zeilenumbrüche selbst setzen">✂ Einteilen</button>
         <button id="fitBtn" title="Ganze Strecke einpassen">⤢</button>
       </div>
-      <div class="speed"><button id="monBtn" title="Fahrplanmonitor, Zugmeldungen und Bildfahrplan in einem eigenen Fenster (zweiter Bildschirm)">🖥 Monitor</button></div>
+      <div class="speed"><button id="themeBtn" title="Zwischen hellem und dunklem Design wechseln">☀ Hell</button><button id="monBtn" title="Fahrplanmonitor, Zugmeldungen und Bildfahrplan in einem eigenen Fenster (zweiter Bildschirm)">🖥 Monitor</button></div>
       <div class="wx" id="wx" title="Wetter"></div>
       <div class="speed"><button id="saveBtn" title="Spielstand im Browser speichern (Strg+S, außerdem automatisch jede Minute)">💾</button><button id="endBtn" title="Schicht auswerten">🏁 Bericht</button></div>
       <div class="stats">
@@ -133,6 +134,7 @@
         <div id="featPick" class="feats"></div>
         <p class="hint">Wähle, welche Bahnhöfe du selbst stellst. Der Rest läuft über die automatische Zuglenkung.</p>
         <div id="areaPick" class="areas"></div>
+        <div class="themePick">Design: <button data-theme="dark">☾ Dunkel</button><button data-theme="light">☀ Hell</button></div>
         <button id="go">Dienst beginnen</button>
         <button id="goTut" class="sec">Mit Tutorial beginnen (empfohlen beim ersten Mal)</button>
         <button id="resume" class="hidden"></button>

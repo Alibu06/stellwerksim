@@ -1,10 +1,11 @@
 import { Graph, Signal } from "../sim/graph";
 import { World, Train } from "../sim/world";
+import { tc } from "../ui/theme";
 
 // Gleisbild im Stil eines modernen elektronischen Stellwerks (eigenes Design).
 // Die Strecke kann in mehrere Zeilen untereinander umbrochen werden, lange Streckengleise werden gestaucht.
 
-export const COLORS = {
+const DARK = {
   bg: "#0c1015",
   band: "#10161d",
   bandLine: "#1b2430",
@@ -23,7 +24,9 @@ export const COLORS = {
   fault: "#ff9f1c",
 };
 
-export const CAT_COLOR: Record<string, string> = { S: "#22b866", RE: "#e04646", RB: "#4a82ea", ICE: "#eef2f6", G: "#c4882f" };
+export const COLORS = new Proxy(DARK, { get: (o, k) => tc((o as any)[k]) }) as typeof DARK;
+const CAT_DARK: Record<string, string> = { S: "#22b866", RE: "#e04646", RB: "#4a82ea", ICE: "#eef2f6", G: "#c4882f" };
+export const CAT_COLOR = new Proxy(CAT_DARK, { get: (o, k) => (typeof k === "string" && o[k] ? tc(o[k]) : (o as any)[k]) }) as Record<string, string>;
 
 export type Hit =
   | { kind: "signal"; sig: Signal }
@@ -219,7 +222,7 @@ export class View {
       const x = pts.reduce((q, p) => q + p.x, 0) / pts.length;
       const y0 = Math.min(...pts.map((p) => p.y)) - 9 * this.k, y1 = Math.max(...pts.map((p) => p.y)) + 9 * this.k;
       const fault = c.faultUntil > 0 || c.blockedUntil > 0;
-      const col = fault ? (blink ? COLORS.fault : "#5a2a2a") : c.closed ? COLORS.yellow : "#8597ab";
+      const col = fault ? (blink ? COLORS.fault : tc("#5a2a2a")) : c.closed ? COLORS.yellow : tc("#8597ab");
       ctx.strokeStyle = col;
       ctx.lineWidth = 1.5;
       ctx.beginPath();
@@ -262,7 +265,7 @@ export class View {
     if (this.mark) {
       const p = this.P(this.mark.x, this.mark.y);
       const r = (14 + 6 * Math.sin(performance.now() / 180)) * this.k;
-      ctx.strokeStyle = "#4fc3ff";
+      ctx.strokeStyle = tc("#4fc3ff");
       ctx.lineWidth = 3;
       ctx.beginPath();
       ctx.arc(p.x, p.y, r, 0, Math.PI * 2);
@@ -320,7 +323,7 @@ export class View {
     for (const [code, s] of Object.entries(this.g.stations)) {
       const p = this.P(s.x, s.y - (s.y < 4 ? 0.7 : -0.3));
       ctx.font = this.sans(12, 650);
-      ctx.fillStyle = "#d3dee9";
+      ctx.fillStyle = tc("#d3dee9");
       ctx.fillText(s.name, p.x, p.y);
       ctx.font = this.mono(8.5);
       ctx.fillStyle = COLORS.textDim;
@@ -344,7 +347,7 @@ export class View {
       ctx.fillStyle = COLORS.platform;
       ctx.fillRect(x1, p.y - h - 3.5, x2 - x1, h);
       if (this.zoom > 0.75) {
-        ctx.fillStyle = "#6f8eaa";
+        ctx.fillStyle = tc("#6f8eaa");
         ctx.font = this.mono(8, 600);
         ctx.textAlign = "center";
         ctx.fillText(e.platform.track, (x1 + x2) / 2, p.y - h - 6);
@@ -393,7 +396,7 @@ export class View {
     }
     ctx.setLineDash([]);
     // Vorgemerkte Fahrstraßen: blau gestrichelt
-    ctx.strokeStyle = "#4f9dff";
+    ctx.strokeStyle = tc("#4f9dff");
     ctx.lineWidth = Math.max(2, lw * 0.6);
     ctx.setLineDash([7, 5]);
     for (const q of this.w.queued) {
@@ -442,7 +445,7 @@ export class View {
       }
     }
     // Fortsetzungspfeile an Zeilenumbrüchen
-    ctx.fillStyle = "#8597ab";
+    ctx.fillStyle = tc("#8597ab");
     for (const m of cutMarks) {
       const s = 4 * this.k;
       ctx.beginPath();
@@ -468,7 +471,7 @@ export class View {
         ctx.arc(p.x, p.y, r, 0, Math.PI * 2);
         ctx.stroke();
       }
-      ctx.fillStyle = fault ? COLORS.fault : locked ? "#2a7a52" : "#8b98a8";
+      ctx.fillStyle = fault ? COLORS.fault : locked ? tc("#2a7a52") : tc("#8b98a8");
       ctx.beginPath();
       ctx.arc(p.x, p.y, 2.3 * this.k, 0, Math.PI * 2);
       ctx.fill();
@@ -498,7 +501,7 @@ export class View {
       const block = s.kind === "block";
       const L = (block ? 7 : 9) * k, Hh = (block ? 4.2 : 5.6) * k;
       // Fuß und Mast
-      ctx.strokeStyle = "#71808f";
+      ctx.strokeStyle = tc("#71808f");
       ctx.lineWidth = 1.3;
       ctx.beginPath();
       const footX = p.x - s.dir * (L * 0.5 + 3 * k);
@@ -511,7 +514,7 @@ export class View {
       // Schirm (Ks-System): Hp0 rot, Ks1 grün, Ks2 gelb nur am Mehrabschnittssignal, Ks1 blinkend bei Zs3v
       // Ks-Hauptsignale kündigen das nächste Hauptsignal immer mit an: gelb = Halt erwarten
       let col = asp.stop ? COLORS.red : asp.expectStop ? COLORS.yellow : COLORS.green;
-      if (!asp.stop && !asp.expectStop && asp.zs3v && Math.floor(this.blink * 2) % 2) col = "#145c36";
+      if (!asp.stop && !asp.expectStop && asp.zs3v && Math.floor(this.blink * 2) % 2) col = tc("#145c36");
       if (asp.zs1) col = Math.floor(this.blink * 2.5) % 2 ? COLORS.white : COLORS.red;
       const tip = p.x + s.dir * L * 0.5, back = p.x - s.dir * L * 0.5;
       ctx.beginPath();
@@ -524,7 +527,7 @@ export class View {
       ctx.shadowBlur = asp.stop && !asp.zs1 ? 0 : 7;
       ctx.fill();
       ctx.shadowBlur = 0;
-      ctx.strokeStyle = "#0c1015";
+      ctx.strokeStyle = tc("#0c1015");
       ctx.lineWidth = 1;
       ctx.stroke();
       if (fault) {
@@ -556,7 +559,7 @@ export class View {
       }
       if (this.selected === s.id) ring(COLORS.white);
       const tgt = this.targets.get(`s${s.id}`);
-      if (tgt !== undefined) ring(tgt ? COLORS.target : "#7a4b55", !tgt);
+      if (tgt !== undefined) ring(tgt ? COLORS.target : tc("#7a4b55"), !tgt);
       if (this.zoom > 0.8 && !block) {
         ctx.font = this.mono(8);
         ctx.fillStyle = COLORS.text;
@@ -592,9 +595,9 @@ export class View {
       const px = P.x, py = P.y + d.dir * 8 * k;
       const asp = this.w.il.distantAspect(d.main, this.w.time);
       let col = asp.expectStop ? COLORS.yellow : COLORS.green;
-      if (!asp.expectStop && asp.zs3v && Math.floor(this.blink * 2) % 2) col = "#145c36";
+      if (!asp.expectStop && asp.zs3v && Math.floor(this.blink * 2) % 2) col = tc("#145c36");
       const r = 3.4 * k;
-      ctx.strokeStyle = "#71808f";
+      ctx.strokeStyle = tc("#71808f");
       ctx.lineWidth = 1;
       ctx.beginPath();
       ctx.moveTo(px, P.y + d.dir * 2 * k);
@@ -608,7 +611,7 @@ export class View {
       ctx.closePath();
       ctx.fillStyle = col;
       ctx.fill();
-      ctx.strokeStyle = "#0c1015";
+      ctx.strokeStyle = tc("#0c1015");
       ctx.stroke();
     }
   }
@@ -620,11 +623,11 @@ export class View {
       const pa = this.P(a.x, a.y), pb = this.P(b.x, b.y);
       const left = p.dir > 0;
       ctx.textAlign = left ? "right" : "left";
-      ctx.fillStyle = "#8597ab";
+      ctx.fillStyle = tc("#8597ab");
       ctx.fillText(left ? `${p.label} ◂` : `▸ ${p.label}`, pa.x + (left ? -7 : 7), (pa.y + pb.y) / 2 + 4);
       const tgt = this.targets.get(`p${code}`);
       if (tgt !== undefined) {
-        ctx.strokeStyle = tgt ? COLORS.target : "#7a4b55";
+        ctx.strokeStyle = tgt ? COLORS.target : tc("#7a4b55");
         ctx.lineWidth = 2;
         ctx.strokeRect(pb.x - 6, pb.y - 6, 12, 12);
       }
@@ -689,7 +692,7 @@ export class View {
       ctx.stroke();
       ctx.globalAlpha = 1;
       // Kupplungsstellen zwischen den Einheiten
-      ctx.fillStyle = COLORS.bg ?? "#0b0f14";
+      ctx.fillStyle = COLORS.bg ?? tc("#0b0f14");
       for (const d of this.unitGaps(t)) {
         const p = this.trainPointAt(t, d);
         if (!p) continue;
@@ -699,7 +702,7 @@ export class View {
       // Spitze als Pfeil
       const h = this.P(pts[0][0] - t.dir * 1e-6, pts[0][1]);
       const s = lw * 0.9;
-      ctx.fillStyle = "#ffffff";
+      ctx.fillStyle = tc("#ffffff");
       ctx.beginPath();
       ctx.moveTo(h.x + t.dir * s * 0.9, h.y);
       ctx.lineTo(h.x - t.dir * s * 0.4, h.y - s * 0.75);
@@ -729,18 +732,18 @@ export class View {
       const bx = h.x - (t.dir > 0 ? bw : 0) - t.dir * 2;
       const by = t.dir > 0 ? h.y + 16 * k : h.y - 16 * k - bh;
       const waiting = t.waitRed > 45;
-      ctx.fillStyle = "#0a0d12f0";
-      ctx.strokeStyle = waiting && Math.floor(this.blink * 2) % 2 ? COLORS.yellow : this.focusTrain === t ? "#ffffff" : CAT_COLOR[t.cat];
+      ctx.fillStyle = tc("#0a0d12f0");
+      ctx.strokeStyle = waiting && Math.floor(this.blink * 2) % 2 ? COLORS.yellow : this.focusTrain === t ? tc("#ffffff") : CAT_COLOR[t.cat];
       ctx.lineWidth = this.focusTrain === t ? 2 : 1.2;
       roundRect(ctx, bx, by, bw, bh, 3);
       ctx.fill();
       ctx.stroke();
-      ctx.fillStyle = "#eef3f8";
+      ctx.fillStyle = tc("#eef3f8");
       ctx.textAlign = "left";
       ctx.fillText(label, bx + 7 * k, by + bh - 3.8 * k);
       const dm = Math.round(t.delay / 60);
       if (dm >= 3) {
-        ctx.fillStyle = dm >= 6 ? "#ff7a59" : COLORS.yellow;
+        ctx.fillStyle = dm >= 6 ? tc("#ff7a59") : COLORS.yellow;
         ctx.font = this.mono(8.5, 700);
         ctx.textAlign = t.dir > 0 ? "right" : "left";
         ctx.fillText(`+${dm}`, t.dir > 0 ? bx - 3 : bx + bw + 3, by + bh - 3.8 * k);
@@ -753,11 +756,11 @@ export class View {
     for (const x of this.candidates) {
       const on = this.breaks.includes(x);
       const p = this.Pb(x, 5, this.bandOf(x - 1e-6));
-      ctx.fillStyle = on ? "#36c5f0" : "#36c5f055";
+      ctx.fillStyle = on ? tc("#36c5f0") : tc("#36c5f055");
       ctx.beginPath();
       ctx.arc(p.x, p.y - 30 * this.k, 7 * this.k, 0, Math.PI * 2);
       ctx.fill();
-      ctx.fillStyle = "#0c1015";
+      ctx.fillStyle = tc("#0c1015");
       ctx.font = this.sans(9, 700);
       ctx.textAlign = "center";
       ctx.fillText(on ? "↵" : "✂", p.x, p.y - 27 * this.k);

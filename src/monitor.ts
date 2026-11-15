@@ -1,10 +1,14 @@
 import { CHANNEL, Snapshot, SnapStop, SnapTrain } from "./sim/snapshot";
+import { applyThemeClass, tc } from "./ui/theme";
 
 // Zweiter Monitor: Abfahrts-/Ankunftstafel, klickbarer Bildfahrplan und ein Arbeitsbereich mit
 // Lage (Störungen, Baustellen, Ereignisse), Dispo (Zugmeldungen, Anschlüsse, Gleisänderung, Wenden, Überholung, Ausfall),
 // Funk und Meldungen. Befehle gehen über den BroadcastChannel an das Stellwerk.
 
-const CAT: Record<string, string> = { S: "#2fd27a", RE: "#ff4d57", RB: "#4d8dff", ICE: "#f2f6fa", G: "#d38a2e" };
+const CAT_D: Record<string, string> = { S: "#2fd27a", RE: "#ff4d57", RB: "#4d8dff", ICE: "#f2f6fa", G: "#d38a2e" };
+const CAT = new Proxy(CAT_D, { get: (o, k) => (typeof k === "string" && o[k] ? tc(o[k]) : (o as any)[k]) }) as Record<string, string>;
+applyThemeClass();
+window.addEventListener("storage", (e) => { if (e.key === "theme") { applyThemeClass(); if (snap) render(); } });
 const RADIO_CMDS = [
   { id: "lage", label: "Wo stehen Sie?" },
   { id: "grund", label: "Was ist los?" },
@@ -378,7 +382,7 @@ function drawGraph() {
   if (cv.width !== W * dpr || cv.height !== H * dpr) { cv.width = W * dpr; cv.height = H * dpr; }
   const ctx = cv.getContext("2d")!;
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-  ctx.fillStyle = "#0b1016";
+  ctx.fillStyle = tc("#0b1016");
   ctx.fillRect(0, 0, W, H);
   lines.clear();
   const add = (id: number, pl: [number, number][]) => { const a = lines.get(id) ?? []; a.push(pl); lines.set(id, a); };
@@ -392,18 +396,18 @@ function drawGraph() {
   ctx.textAlign = "right";
   for (const x of st) {
     const y = Y(x.s);
-    ctx.strokeStyle = "#18212c";
+    ctx.strokeStyle = tc("#18212c");
     ctx.beginPath(); ctx.moveTo(L, y); ctx.lineTo(W - R, y); ctx.stroke();
-    ctx.fillStyle = "#9fb0c3";
+    ctx.fillStyle = tc("#9fb0c3");
     ctx.fillText(x.name.replace(" (Sieg)", ""), L - 8, y + 4);
   }
   ctx.textAlign = "center";
   const step = range <= 60 ? 600 : range <= 120 ? 900 : 1800;
   for (let t = Math.ceil(t0 / step) * step; t < t1; t += step) {
     const x = X(t);
-    ctx.strokeStyle = "#151d27";
+    ctx.strokeStyle = tc("#151d27");
     ctx.beginPath(); ctx.moveTo(x, T); ctx.lineTo(x, H - B); ctx.stroke();
-    ctx.fillStyle = "#7b8ca0";
+    ctx.fillStyle = tc("#7b8ca0");
     ctx.fillText(hm(t), x, T - 8);
   }
   // Baustellen und Sperrungen als Bänder hinterlegen
@@ -455,7 +459,7 @@ function drawGraph() {
     }
   }
   // Jetzt-Linie
-  ctx.strokeStyle = "#36c5f0";
+  ctx.strokeStyle = tc("#36c5f0");
   ctx.lineWidth = 1.5;
   ctx.beginPath(); ctx.moveTo(X(s.time), T - 2); ctx.lineTo(X(s.time), H - B); ctx.stroke();
 }

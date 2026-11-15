@@ -1,0 +1,88 @@
+/* automatisch erzeugt mit tools/lightcss.py – nicht von Hand ändern */
+html.light { --bg: #ebeff5; --panel: #e1e7ef; --line: #cad4e0; --text: #223241; --dim: #687b91; --good: #24a55f; --warn: #c59700; --bad: #ff0412; --accent: #10a8d5; }
+html.light header { background: linear-gradient(#dce3ed, #e4eaf1); }
+html.light #clock { color: #141414; }
+html.light #conn { background: #d5ebde; }
+html.light #conn.off { background: #e8cfd1; color: #ff545f; }
+html.light .stats b { color: #141414; }
+html.light select { background: #dbe2ec; }
+html.light .seg button { background: #d7dfe9; }
+html.light .seg button.on { background: #c5d6e3; color: #141414; border-color: #2a6a8a; }
+html.light #board { background: #f3f6f9; }
+html.light #boardTab td { border-bottom: 1px solid #dce3ed; }
+html.light #boardTab .t { color: #141414; }
+html.light #boardTab .dest { color: #141414; }
+html.light .cat { color: #ecf2f6; }
+html.light #side h3 { color: #141414; }
+html.light .rep { background: #f2f0e5; border: 1px solid #ded6ba; }
+html.light .rep.out { background: #dee6ef; }
+html.light .rep.acc { background: #e4f1ea; border-color: #b4dbc4; }
+html.light .rep button { background: #a7d5b9; border: 1px solid #24a55f; color: #141414; }
+html.light .ev { background: #e7edf3; border-left: 3px solid #afbac9; color: #384a5d; }
+html.light .fault { background: #f1ebe2; border: 1px solid #ded2ba; }
+html.light #boardTab .chg { color: #c59700; }
+html.light #boardTab s { color: #5e7288; }
+html.light #boardTab tr[data-id]:hover td { background: #e4ebf2; }
+html.light #boardTab tr.sel td { background: #d1dee9; }
+html.light #gtip { background: #e2e9f1ee; border: 1px solid #b9c8d8; }
+html.light .mtabs { background: #e4eaf1; }
+html.light .mtabs button.on { color: #141414; }
+html.light .mtabs i { color: #141414; }
+html.light #side h3 { color: #141414; }
+html.light .sum b { color: #141414; }
+html.light .lage { background: #dce3ed; border-left: 4px solid #8c9bab; }
+html.light .lage.stoerung, html.light .lage.zug, html.light .lage.bue { border-left-color: #c56100; }
+html.light .lage.wetter { border-left-color: #3764ff; }
+html.light .lh b { color: #141414; }
+html.light .lage p { color: #35475a; }
+html.light .bar { background: #cad4e0; }
+html.light .chips button { background: #d1dbe6; border: 1px solid #b9c7d7; }
+html.light .rep.ref { background: #eee0e2; border-color: #d7acb0; }
+html.light .pane button { background: #cad7e6; border: 1px solid #a7bdd4; color: #141414; }
+html.light .pane button.go, html.light .rep button.go { background: #a7d5b9; border-color: #24a55f; }
+html.light .pane button.no { background: #e6cbce; border-color: #7a3038; }
+html.light .pane button.no.armed { background: #8a1d27; border-color: #ff0412; }
+html.light .conn { background: #f2f0e5; border: 1px solid #ded6ba; }
+html.light .tcard { background: #e7edf3; }
+html.light .th b { color: #141414; }
+html.light .th span { color: #35475a; }
+html.light .flag.bad { background: #e8cfd1; color: #ff545f; }
+html.light .flag.warn { background: #ece6d7; color: #f4b300; }
+html.light .flag.info { background: #d1dee9; color: #55b4ec; }
+html.light table.stops td { border-bottom: 1px solid #dbe2ec; }
+html.light table.stops tr.betr td { color: #55b4ec; }
+html.light .tcard s { color: #5e7288; }
+html.light .tcard .chg, html.light .chg { color: #c59700; }
+html.light .act b { color: #141414; }
+html.light .radio { background: #ebeff5; }
+html.light .rform input { background: #dbe2ec; }
+html.light #mtoast { background: #d5ebde; border: 1px solid #24a55f; color: #141414; }
+html.light #mtoast.bad { background: #e8cfd1; }
+html.light #big tr.done td { color: #8796a8; }
+html.light #big tr.cur td { color: #141414; }
+html.light #big .pos { background: #e6ecf3; }
+html.light #big ul.status li { border-left: 3px solid #afbac9; background: #dde5ee; }
+html.light #big .tact button, html.light #big .rbtns button, html.light #big .rform button { background: #d7dfe9; }
+html.light #big .tact button:hover, html.light #big .rbtns button:hover { background: #cad6e2; }
+html.light #big select, html.light #big input { background: #e6ecf3; color: #141414; }
+html.light #big .radio { background: #eaeff5; }
+html.light .fisbox { background: #f6f8fa; border: 2px solid #c2cbd8; }
+html.light .fistop { background: #d5e0eb; }
+html.light .fisline { color: #ebf1f5; }
+html.light .fisdest { color: #141414; }
+html.light .fisclock { color: #44abff; }
+html.light .fisnext { border-bottom: 1px solid #d3dbe7; }
+html.light .fisnext small { color: #516a82; }
+html.light .fisnext div { color: #eab700; }
+html.light .fisdelay { color: #ff1b29; }
+html.light .fislist div { color: #91b3d2; border-bottom: 1px dotted #cdd7e4; }
+html.light .fislist div.dim { color: #667a8e; }
+html.light .fislist span:last-child { color: #44abff; }
+html.light .fisticker { background: #d5e0eb; color: #141414; }
+html.light .nexthalt { background: #dbe4ee; border: 1px solid #a7c0d5; }
+html.light .nexthalt b { color: #141414; }
+html.light .bighead button { background: #cad7e6; border: 1px solid #a7bdd4; color: #141414; }
+html.light #big table.plan td { border-bottom: 1px solid #dbe2ec; }
+html.light #big .pane button, html.light #big #bCmds button, html.light #big .tact button, html.light #big .act button, html.light #big .rform button { background: #cad7e6; border: 1px solid #a7bdd4; color: #141414; }
+html.light #big button.no { background: #e6cbce; border-color: #7a3038; }
+html.light #big button.no.armed { background: #8a1d27; border-color: #ff0412; }

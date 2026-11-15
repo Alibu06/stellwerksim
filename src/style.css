@@ -215,3 +215,7 @@ s { color: #8597ab; }
 select.trk { background: #151d27; color: #fff; border: 1px solid var(--line); border-radius: 4px; font-size: 12px; padding: 1px 2px; }
 #sigtip { position: fixed; display: none; z-index: 40; pointer-events: none; background: #0d1520f2; border: 1px solid #2f4a66; border-radius: 6px; padding: 7px 9px; font-size: 12px; line-height: 1.5; color: #d5e2ee; max-width: 360px; box-shadow: 0 6px 20px #000a; }
 #sigtip .ok { color: #2fd27a; } #sigtip .warn { color: #ffd23f; } #sigtip .bad { color: #ff4d57; }
+
+.themePick { margin: 14px 0 4px; font-size: 13px; color: var(--dim); display: flex; gap: 6px; align-items: center; }
+.themePick button { background: #18212c; border: 1px solid var(--line); border-radius: 6px; padding: 5px 12px; color: var(--dim); }
+.themePick button.on { background: #173246; color: #fff; border-color: #2a6a8a; }

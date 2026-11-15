@@ -1,0 +1,90 @@
+/* automatisch erzeugt mit tools/lightcss.py – nicht von Hand ändern */
+html.light { --bg: #eaeef3; --panel: #e1e7ef; --line: #cad4e0; --text: #223241; --dim: #687b91; --accent: #10a8d5; --good: #24a55f; --warn: #c59700; --bad: #ff0412; }
+html.light #bar { background: linear-gradient(#dce3ed, #e4eaf1); }
+html.light .clock { color: #141414; }
+html.light .speed button { background: #d7dfe9; }
+html.light .speed button.on { background: #c5d6e3; color: #141414; border-color: #2a6a8a; }
+html.light .tabs button.on { color: #141414; }
+html.light .tab h3 { color: #141414; }
+html.light .tab p { color: #384a5d; }
+html.light .row { border-bottom: 1px solid #d7dfe9; }
+html.light .row:hover { background: #d7e1eb; }
+html.light .row .info b { color: #2c3d4d; }
+html.light .waiting { background: #eeeadc; }
+html.light .areas label, html.light #tab-area label { background: #dbe2ec; }
+html.light #tab-area .act button { background: #d7dfe9; }
+html.light #log { background: #e7edf3; }
+html.light #log div { background: #e0e7ef; border-left: 3px solid #afbac9; color: #384a5d; }
+html.light #log div.bad { color: #ff6f79; }
+html.light #toast { background: #ecd8dc; border: 1px solid #d2a2a9; color: #ff6f79; }
+html.light #card { background: #e1e7eff2; border: 1px solid #bec9d7; box-shadow: 0 10px 30px #ffffff88; }
+html.light #card tr.done td { color: #8796a8; }
+html.light #card tr.cur td { color: #141414; }
+html.light #start { background: radial-gradient(ellipse at 30% 20%, #cedbe7 0%, #edf0f5 60%); }
+html.light #start .panel { background: #e2e9f1f2; border: 1px solid #c0cdde; box-shadow: 0 20px 60px #ffffffaa; }
+html.light #start label { color: #384a5d; }
+html.light #start select { background: #dbe2ec; color: #141414; }
+html.light #start .hint { color: #384a5d; }
+html.light #go { background: linear-gradient(#1f8fbf, #17709a); color: #141414; }
+html.light .tabs button b { color: #141414; }
+html.light .fault { background: #f1ebe2; border: 1px solid #ded2ba; }
+html.light .fault button { background: #e9e1d1; border: 1px solid #8a6418; color: #ea9b00; }
+html.light #card .ttabs button.on { color: #141414; }
+html.light #card .pos { background: #e6ecf3; }
+html.light #card ul.status li { border-left: 3px solid #afbac9; background: #dde5ee; }
+html.light #card .tact button, html.light #card .rbtns button, html.light #card .rform button { background: #d7dfe9; }
+html.light #card .tact button:hover, html.light #card .rbtns button:hover { background: #cad6e2; }
+html.light #card select, html.light #card input { background: #e6ecf3; color: #141414; }
+html.light #card .radio { background: #eaeff5; }
+html.light .fisbox { background: #f6f8fa; border: 2px solid #c2cbd8; }
+html.light .fistop { background: #d5e0eb; }
+html.light .fisline { color: #ebf1f5; }
+html.light .fisdest { color: #141414; }
+html.light .fisclock { color: #44abff; }
+html.light .fisnext { border-bottom: 1px solid #d3dbe7; }
+html.light .fisnext small { color: #516a82; }
+html.light .fisnext div { color: #eab700; }
+html.light .fisdelay { color: #ff1b29; }
+html.light .fislist div { color: #91b3d2; border-bottom: 1px dotted #cdd7e4; }
+html.light .fislist div.dim { color: #667a8e; }
+html.light .fislist span:last-child { color: #44abff; }
+html.light .fisticker { background: #d5e0eb; color: #141414; }
+html.light #ctx { background: #dee5eef7; border: 1px solid #bec9d7; box-shadow: 0 10px 30px #ffffffaa; }
+html.light #ctx button:hover:not(:disabled) { background: #cad6e2; }
+html.light #ctx button:disabled { color: #8c9aa9; }
+html.light .rep { background: #f2f0e5; border: 1px solid #ded6ba; }
+html.light .rep.out { background: #dee6ef; }
+html.light .rep button { background: #a7d5b9; border: 1px solid #24a55f; color: #141414; }
+html.light .wx { color: #84b0d9; }
+html.light .site { background: #f0f0e7; border: 1px solid #e1dfc0; }
+html.light .site.on { border-color: #72631f; }
+html.light .conn { background: #dfe8f0; border: 1px solid #a7c0d5; }
+html.light .conn button { background: #c4d5e3; border: 1px solid #2f6b99; color: #69b4ff; }
+html.light .conn button.no { background: #e7d8d8; border-color: #cf9d9d; color: #ff6969; }
+html.light #report { background: #ffffffbb; }
+html.light #report .panel { background: #e2e9f1; border: 1px solid #c0cdde; box-shadow: 0 20px 60px #ffffffaa; }
+html.light #report .kpis div { background: #dbe2ec; border: 1px solid #c0cdde; }
+html.light #report td { border-bottom: 1px solid #d0d9e5; }
+html.light #report .bar { background: #c15a1f; }
+html.light #report button { background: #a7d5bf; color: #141414; }
+html.light #resume { background: #cad7e6; border: 1px solid #2f6b99; color: #70baff; }
+html.light #goTut { background: #d7dfe9; border: 1px solid #2a6a8a; color: #69b4ff; }
+html.light #tut { background: #dee6eff5; border: 1px solid #2f6b99; box-shadow: 0 10px 40px #ffffffcc; }
+html.light #tut.ok { border-color: #24a55f; }
+html.light #tut p { color: #8eb1d1; }
+html.light #tut button { background: #a7d5bf; color: #141414; }
+html.light #tut button.ghost { border: 1px solid #aab9ca; color: #384a5d; }
+html.light #tut .twait { color: #06aaff; }
+html.light #tutHl { border: 2px solid #06aaff; box-shadow: 0 0 0 4px #06aaff33; }
+html.light .tutstart { background: #a7d5bf; color: #141414; }
+html.light .nexthalt { background: #dbe4ee; border: 1px solid #a7c0d5; }
+html.light .nexthalt b { color: #141414; }
+html.light .chg { color: #c59700; }
+html.light s { color: #5e7288; }
+html.light select.trk { background: #dbe2ec; color: #141414; }
+html.light #sigtip { background: #e3e9f2f2; border: 1px solid #a2bad2; color: #8eb1d1; box-shadow: 0 6px 20px #ffffffaa; }
+html.light #sigtip .ok { color: #24a55f; }
+html.light #sigtip .warn { color: #c59700; }
+html.light #sigtip .bad { color: #ff0412; }
+html.light .themePick button { background: #d7dfe9; }
+html.light .themePick button.on { background: #c5d6e3; color: #141414; border-color: #2a6a8a; }

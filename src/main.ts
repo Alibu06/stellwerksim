@@ -7,6 +7,7 @@ import { ContextMenu, MenuItem } from "./ui/contextMenu";
 import { radio } from "./sim/radio";
 import { CHANNEL, makeSnapshot } from "./sim/snapshot";
 import { Tutorial } from "./ui/tutorial";
+import { applyThemeClass, isLight } from "./ui/theme";
 import { SAVE_KEY, loadGame, readSave, saveGame } from "./sim/save";
 import { DEFAULT_FEATURES, FEATURE_LABELS, Features, WX } from "./sim/extras";
 
@@ -682,5 +683,17 @@ async function boot() {
   requestAnimationFrame(frame);
   (window as any).game = { w, view, g };
 }
+
+// ---------- Helles / dunkles Design ----------
+const setTheme = (light: boolean) => {
+  localStorage.setItem("theme", light ? "light" : "dark");
+  applyThemeClass();
+  const b = document.getElementById("themeBtn");
+  if (b) b.textContent = light ? "☾ Dunkel" : "☀ Hell";
+  document.querySelectorAll<HTMLButtonElement>("[data-theme]").forEach((x) => x.classList.toggle("on", (x.dataset.theme === "light") === light));
+};
+setTheme(isLight());
+document.getElementById("themeBtn")!.onclick = () => setTheme(!isLight());
+document.querySelectorAll<HTMLButtonElement>("[data-theme]").forEach((x) => (x.onclick = () => setTheme(x.dataset.theme === "light")));
 
 boot();
