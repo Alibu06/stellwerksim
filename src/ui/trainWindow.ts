@@ -76,7 +76,7 @@ export class TrainWindow {
         <ul class="status">${st.map((x) => `<li class="${x.kind}">${esc(x.text)}</li>`).join("")}</ul>
         <table class="kv">
           <tr><td>Zuggattung</td><td>${t.cat === "G" ? "Güterzug" : t.cat === "S" ? "S-Bahn" : t.cat === "ICE" ? "ICE" : t.cat === "RE" ? "Regional-Express" : "Regionalbahn"} ${t.trip.line !== t.cat ? esc(t.trip.line) : ""}</td></tr>
-          <tr><td>Fahrzeug</td><td>BR ${t.tfz}${t.cat === "S" && t.len > 100 ? " (Doppeltraktion)" : ""}</td></tr>
+          <tr><td>Zugbildung</td><td>${t.cat === "G" ? `Lok BR ${t.tfz} + ${Math.max(1, Math.round((t.len - 19) / 18))} Wagen, ${Math.round(t.len)} m${t.trip.mass ? `, ${t.trip.mass} t` : ""}` : `${Math.max(1, Math.round(t.len / ({ S: 68, RE: 75, RB: 42, ICE: 200 } as Record<string, number>)[t.cat]))} × BR ${t.tfz}, ${Math.round(t.len)} m`}</td></tr>
           <tr><td>Länge / Vmax</td><td>${Math.round(t.len)} m · ${Math.round(t.vmax * 3.6)} km/h${t.trip.mass ? ` · ${t.trip.mass} t` : ""}</td></tr>
           <tr><td>Tf</td><td>${esc(t.driver)}</td></tr>
           <tr><td>Nächstes Signal</td><td>${t.nextSig ? `${w.il.sig(t.nextSig).name} in ${Math.round(t.distNextSig)} m` : "–"}</td></tr>

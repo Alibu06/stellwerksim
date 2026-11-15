@@ -615,6 +615,32 @@ export class View {
     return pts;
   }
 
+  // Punkt im Abstand d (Meter) hinter der Zugspitze
+  private trainPointAt(t: Train, d: number): [number, number] | null {
+    let rem = d;
+    for (let i = t.body.length - 1; i >= 0; i--) {
+      const e = this.g.edges[t.body[i]];
+      const a = this.g.nodes[e.a], b = this.g.nodes[e.b];
+      const [s, q] = t.dir > 0 ? [a, b] : [b, a];
+      const headHere = i === t.body.length - 1 ? Math.min(t.headPos, e.len) : e.len;
+      if (rem <= headHere) {
+        const m = headHere - rem;
+        return [s.x + (q.x - s.x) * (m / e.len), s.y + (q.y - s.y) * (m / e.len)];
+      }
+      rem -= headHere;
+    }
+    return null;
+  }
+
+  // Fahrzeuggrenzen: Triebzüge in Einheiten, Güterzug Lok + Wagenzug
+  private unitGaps(t: Train): number[] {
+    const unit = t.cat === "S" ? 68 : t.cat === "RE" ? 75 : t.cat === "RB" ? 42 : t.cat === "ICE" ? 200 : 0;
+    if (t.cat === "G") return [19];
+    const out: number[] = [];
+    for (let d = unit; unit && d < t.len - 5; d += unit) out.push(d);
+    return out;
+  }
+
   private drawTrainBodies(ctx: CanvasRenderingContext2D) {
     const lw = Math.max(4, 6.5 * Math.min(this.zoom, 1.5));
     ctx.lineCap = "round";
@@ -628,6 +654,14 @@ export class View {
       for (let i = 0; i + 1 < pts.length; i++) this.seg(ctx, pts[i][0], pts[i][1], pts[i + 1][0], pts[i + 1][1]);
       ctx.stroke();
       ctx.globalAlpha = 1;
+      // Kupplungsstellen zwischen den Einheiten
+      ctx.fillStyle = COLORS.bg ?? "#0b0f14";
+      for (const d of this.unitGaps(t)) {
+        const p = this.trainPointAt(t, d);
+        if (!p) continue;
+        const P = this.P(p[0], p[1]);
+        ctx.fillRect(P.x - 1, P.y - lw / 2 - 0.5, 2, lw + 1);
+      }
       // Spitze als Pfeil
       const h = this.P(pts[0][0] - t.dir * 1e-6, pts[0][1]);
       const s = lw * 0.9;
