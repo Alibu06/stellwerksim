@@ -340,6 +340,7 @@ export class View {
 
   private drawPlatforms(ctx: CanvasRenderingContext2D) {
     const h = Math.max(2.5, 4 * this.zoom);
+    const shown = new Set<string>();
     for (const e of this.g.edges) {
       if (!e.platform) continue;
       const a = this.g.nodes[e.a], b = this.g.nodes[e.b];
@@ -352,8 +353,25 @@ export class View {
         ctx.font = this.mono(8, 600);
         ctx.textAlign = "center";
         ctx.fillText(e.platform.track, (x1 + x2) / 2, p.y - h - 6);
+        const n = this.paxAt(e.platform.st, e.platform.track);
+        if (n > 0 && this.zoom > 0.75 && !shown.has(e.platform.st + e.platform.track)) {
+          shown.add(e.platform.st + e.platform.track);
+          ctx.fillStyle = n > 180 ? COLORS.yellow : tc("#5d7890");
+          ctx.font = this.mono(7.5, 500);
+          ctx.textAlign = "left";
+          ctx.fillText(`${n} Reisende`, (x1 + x2) / 2 + 8, p.y - h - 6);
+        }
       }
     }
+  }
+  private paxCache = new Map<string, number>();
+  private paxT = -1e9;
+  private paxAt(st: string, track: string): number {
+    if (Math.abs(this.w.time - this.paxT) > 5) { this.paxCache.clear(); this.paxT = this.w.time; }
+    const k = st + "|" + track;
+    let n = this.paxCache.get(k);
+    if (n === undefined) { n = this.w.life.waiting(st, track); this.paxCache.set(k, n); }
+    return n;
   }
 
   private edgeStyle(eid: number): { color: string; dash?: number[] } {

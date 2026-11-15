@@ -1,5 +1,6 @@
 import { Extras } from "./extras";
 import { Ops } from "./ops";
+import { Life } from "./life";
 import { Dir, GEdge, Graph, nextEdge, otherEnd, trailingOk, vEdge } from "./graph";
 import { Interlocking, PathDef } from "./interlocking";
 import { Cat, TripSpec, TTStop, rng } from "./timetable";
@@ -57,6 +58,7 @@ export interface Train {
   reasonNote?: string;
   extraDwell: number; // Anschluss abwarten (Sekunden, beim nächsten Halt)
   holdFor?: { st: string; sec: number };
+  medStop?: { st: string; sec: number }; // Rettungsdienst erwartet den Zug an diesem Halt
   waitFor?: { st: string; train: number; since?: number; no?: string }; // Überholung abwarten
   shunt?: { edges: number[]; label: string; rev?: ShuntTarget["rev"] }; // laufende Rangierfahrt
   shunted?: boolean; // Anschluss abwarten an bestimmtem Bahnhof (Disposition)
@@ -152,6 +154,7 @@ export class World {
   manualAreas = new Set<string>(); // Bahnhöfe, die der Spieler stellt
   ext: Extras;
   ops: Ops;
+  life: Life;
   connAlerts: { id: number; feeder: number; conn: number; st: string; t: number; wait: number }[] = [];
 
   constructor(public g: Graph, trips: TripSpec[], startTime: number) {
@@ -160,10 +163,12 @@ export class World {
     this.findSingleTracks();
     this.ext = new Extras(this);
     this.ops = new Ops(this);
+    this.life = new Life(this);
     // Züge, deren Fahrt bei Spielbeginn schon vorbei ist, entfallen; Wendezüge werden vom Vorgänger übernommen
     this.pending = trips.filter((t) => !t.turnedFrom && t.entryTime + t.initialDelay >= startTime - 60);
     this.buildUmlauf(trips);
     this.ops.start(trips);
+    this.life.start();
     this.planCoupling(trips);
   }
 
@@ -234,6 +239,7 @@ export class World {
     if (this.zugmeldung) this.reportsTick();
     this.ext.step(dt);
     this.ops.step(dt);
+    this.life.step(dt);
     this.spawn();
     for (const t of this.trains) this.drive(t, dt);
     this.trains = this.trains.filter((t) => !t.gone);
@@ -684,6 +690,13 @@ export class World {
     if (t.holdFor && t.holdFor.st === s.st && !startHere) {
       t.extraDwell = Math.max(t.extraDwell, t.holdFor.sec);
       t.holdFor = undefined;
+    }
+    if (t.medStop && t.medStop.st === s.st && !startHere) {
+      t.dwellUntil = Math.max(t.dwellUntil, this.time + t.medStop.sec);
+      t.fault = "Rettungsdienst im Zug"; t.faultUntil = t.dwellUntil;
+      this.cause(t, "Rettungsdiensteinsatz", t.medStop.sec);
+      this.log(`${t.no}: Rettungsdienst übernimmt in ${this.g.stations[s.st].name} den Fahrgast, Zug steht ca. ${Math.round(t.medStop.sec / 60)} min`, "info");
+      t.medStop = undefined;
     }
     if (t.extraDwell > 0 && !startHere) {
       t.dwellUntil = Math.max(t.dwellUntil, s.dep + t.extraDwell);
@@ -1722,7 +1735,7 @@ export class World {
   private crossingBlocked(t: Train, p: PathDef): boolean {
     // Einfahrt in den eingleisigen Abschnitt nur, wenn im Kreuzungsbahnhof am anderen Ende ein Gleis frei ist
     // Hat der Fdl am anderen Ende die Einfahrt für diese Richtung schon gestellt, ist die Kreuzung entschieden
-    if (p.endSig) { const r = this.il.routes.get(this.il.sig(p.endSig).route); if (r && r.path.dir === t.dir) return false; }
+    if (p.endSig) { const r = this.il.routes.get(this.il.sig(p.endSig).route); if (r && !r.used && r.path.dir === t.dir && !this.trains.some((o) => o !== t && (o.nextSig === p.endSig || o.body.some((e) => p.edges.includes(e))))) return false; }
     for (const S of this.singles) {
       if (!p.edges.some((e) => S.edges.has(e))) continue;
       let far = [...S.gates].filter(([, d]) => d !== t.dir);
@@ -2323,11 +2336,35 @@ export class World {
   stS(st: string) { return this.g.stations[st].s ?? 0; }
 
   // Bahnhöfe, in denen der Zug vorzeitig wenden kann (Halt liegt vor dem Ziel und im Rückfahrplan)
+  // Außerplanmäßiger Halt (Netzleitstelle): Zug hält zusätzlich an einem Bahnhof, durch den er sonst durchfährt
+  addStop(t: Train, st: string, dwell = 60): string | null {
+    if (t.stops.some((x, i) => i >= t.stopIdx && x.st === st && !x.done)) return `${t.no} hält dort ohnehin`;
+    const d = (this.stS(st) - this.headS(t)) * t.dir;
+    if (d < 1500) return `${t.no} ist schon zu nah dran oder vorbei`;
+    const eta = this.time + d / Math.max(10, t.vmax * 0.8);
+    const ns = { st, arr: eta, dep: eta + dwell, done: false, plan: this.planTrack(st, t.dir, t.trip.line, t.trip.to), extra: true } as any;
+    const i = t.stops.findIndex((x, k) => k >= t.stopIdx && !x.done && (this.stS(x.st) - this.stS(st)) * t.dir > 0);
+    if (i < 0) t.stops.push(ns); else t.stops.splice(i, 0, ns);
+    this.log(`Disposition: ${t.no} hält außerplanmäßig in ${this.g.stations[st].name}`, "info");
+    return null;
+  }
+
   shortTurnOptions(t: Train): string[] {
     const nx = t.trip.turnInto;
     const rest = t.stops.slice(t.stopIdx, t.stops.length - (t.trip.exitPortal ? 0 : 1)).filter((x) => !x.done && !x.betr);
     const big = (st: string) => this.platformTracks(st).length >= 2;
-    return rest.filter((x) => big(x.st) && (!nx || nx.dir === t.dir || nx.stops.some((y) => y.st === x.st))).map((x) => x.st);
+    return rest.filter((x) => big(x.st) && this.exitBack(x.st, x.disp ?? x.plan, -t.dir as Dir) && (!nx || nx.dir === t.dir || nx.stops.some((y) => y.st === x.st))).map((x) => x.st);
+  }
+  // Hat das Bahnsteiggleis ein Ausfahrsignal in Gegenrichtung? (sonst kann dort kein Zug wenden)
+  exitBack(st: string, track: string | undefined, dir: Dir): boolean {
+    const g = this.g;
+    const pe = g.edges.filter((E) => E.platform?.st === st && (!track || E.platform.track === track));
+    if (!pe.length) return false;
+    return pe.some((E) => {
+      const y = g.nodes[E.a].y;
+      const lo = Math.min(g.nodes[E.a].s ?? 0, g.nodes[E.b].s ?? 0) - 250, hi = Math.max(g.nodes[E.a].s ?? 0, g.nodes[E.b].s ?? 0) + 250;
+      return g.signals.some((sg) => sg.dir === dir && g.nodes[sg.node].y === y && (g.nodes[sg.node].s ?? -1e9) >= lo && (g.nodes[sg.node].s ?? 1e9) <= hi);
+    });
   }
 
   shortTurn(trainId: number, st: string): string | null {
@@ -2566,6 +2603,7 @@ export class World {
     }
     if (t.sight) out.push({ text: "Fahrt auf Sicht (Ersatzsignal)", kind: "warn" });
     if (t.body.some((e) => this.g.edges[e].slow)) out.push({ text: `In Langsamfahrstelle ${Math.min(...t.body.map((e) => this.g.edges[e].slow ?? 999))} km/h`, kind: "warn" });
+    if (t.medStop) out.push({ text: `Rettungsdienst erwartet den Zug in ${this.g.stations[t.medStop.st].name}`, kind: "warn" });
     if (t.holdFor) out.push({ text: `Wartet in ${this.g.stations[t.holdFor.st].name} ${Math.round(t.holdFor.sec / 60)} min auf Anschluss`, kind: "info" });
     if (t.extraDwell) out.push({ text: `Wartet beim nächsten Halt ${Math.round(t.extraDwell / 60)} min auf Anschluss`, kind: "info" });
     if (ps && !t.dwelling) {

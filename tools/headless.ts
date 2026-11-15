@@ -83,7 +83,7 @@ while (w.time < start + hours * 3600) {
   }
 }
 for (const e of w.events.filter((e) => e.kind !== "info").slice(-25)) console.log(Math.floor(e.t / 3600) + ":" + String(Math.floor(e.t / 60) % 60).padStart(2, "0"), e.text);
-if (process.env.OPS) for (const t of ALL) if (/☎|Netzleitstelle|Lü|Ersatzverkehr|umgeleitet|Personal|Bauz|Mess |Lz |DbZ|Begegnung|Teilausfall|Bereitstellung|abgestellt|bereit|EK |Abstell|gekuppelt|Kuppeln|abgehängt|Notruf|Hilfslok|liegengeblieben|Sperrfahrt|geschleppt|liegt fest|notdürftig|Rotte|Sperrung|Schnellbremsung|Oberleitung|SEV|Ersatz/.test(t)) console.log("OPS", t);
+if (process.env.OPS) for (const t of ALL) if (/☎|Netzleitstelle|Lü|Ersatzverkehr|umgeleitet|Personal|Bauz|Mess |Lz |DbZ|Begegnung|Teilausfall|Bereitstellung|abgestellt|bereit|EK |Abstell|gekuppelt|Kuppeln|abgehängt|Notruf|Hilfslok|liegengeblieben|Sperrfahrt|geschleppt|liegt fest|notdürftig|Rotte|Sperrung|Schnellbremsung|Oberleitung|SEV|Ersatz|Reisende|Rettungsdienst|Notbremse|Bundespolizei|Sturm|Polizei|Tf |Zusatzhalt|wenden|beschwert/.test(t)) console.log("OPS", t);
 if (process.env.ALL) for (const t of ALL) if (/Wetter|Baustelle|Ereignis|Feuer|Personen|Baum|Pkw|Notarzt|Polizei|gestört|Anschluss|Disposition|Gleisänderung/.test(t)) console.log(t);
 if (process.env.OPS) for (const t of w.trains.filter((x) => x.towed || x.rescue || x.fault)) console.log("STATE", t.no, w.position(t).text, w.status(t).map((x) => x.text).join(" | "));
 if (process.env.NEAR) { const [a, b] = process.env.NEAR.split(",").map(Number); for (const t of w.trains.filter((x) => { const s = w.headS(x); return s > a && s < b; })) console.log("NEAR", t.no, Math.round(w.headS(t)), t.dir, w.position(t).text, "|", w.status(t).map((x) => x.text).join(" | ")); }

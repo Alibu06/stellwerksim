@@ -63,7 +63,7 @@ export interface Site {
   active: boolean; prev: Map<number, { slow?: number; closed?: boolean }>;
 }
 export interface Happening {
-  id: number; kind: "feuer" | "personen" | "notarzt" | "polizei" | "baum" | "pkw" | "ol"; text: string; edges: number[]; until: number;
+  id: number; kind: "feuer" | "personen" | "notarzt" | "polizei" | "baum" | "pkw" | "ol" | "bahnsteig" | "sturm"; text: string; edges: number[]; until: number;
   prev: Map<number, { slow?: number; closed?: boolean }>; station?: string; sec?: [string, string];
 }
 
@@ -326,9 +326,19 @@ export class Extras {
     }
   }
 
-  startHappening(kind: Happening["kind"]): string | null {
+  // Sonderlage mit festen Kanten (Bahnsteigsperrung durch Polizei, vorsorgliche La bei Sturm)
+  customHappening(kind: Happening["kind"], text: string, edges: number[], dur: number, closed: boolean, slow?: number, station?: string, sec?: [string, string]): number {
+    const h: Happening = { id: this.id++, kind, text, edges, until: this.w.time + dur, prev: new Map(), station, sec };
+    this.close(h, closed, slow);
+    this.happenings.push(h);
+    this.w.addFault("event", h.id, h.until, h.text);
+    return h.id;
+  }
+  endHappening(id: number) { const h = this.happenings.find((x) => x.id === id); if (h) h.until = this.w.time; }
+
+  startHappening(kind: Happening["kind"], at?: [string, string]): string | null {
     const w = this.w, g = w.g, r = this.rand;
-    const sec = SECTIONS[Math.floor(r() * SECTIONS.length)];
+    const sec = at ?? SECTIONS[Math.floor(r() * SECTIONS.length)];
     const nm = (c: string) => g.stations[c].name;
     const h: Happening = { id: this.id++, kind, text: "", edges: [], until: 0, prev: new Map(), sec: [sec[0], sec[1]] };
     switch (kind) {
@@ -573,9 +583,9 @@ export class Extras {
     for (const h of this.happenings) {
       if (h.until <= now) continue;
       const blocks = h.edges.some((e) => g.edges[e].closed);
-      out.push({ id: `h${h.id}`, kind: "ereignis", icon: { feuer: "🔥", personen: "🚶", notarzt: "🚑", polizei: "🚓", baum: "🌳", pkw: "🚗", ol: "⚡" }[h.kind], title: h.text.split(":")[0],
+      out.push({ id: `h${h.id}`, kind: "ereignis", icon: { feuer: "🔥", personen: "🚶", notarzt: "🚑", polizei: "🚓", baum: "🌳", pkw: "🚗", ol: "⚡", bahnsteig: "🚓", sturm: "🌬" }[h.kind], title: h.text.split(":")[0],
         where: h.station ? g.stations[h.station].name : loc(h.edges), until: h.until,
-        effect: h.kind === "ol" ? "Beide Gleise ohne Strom: keine Zugfahrten. Züge vor der Störung wenden lassen (Netzleitstelle schlägt Ersatzverkehr vor). Die SEV-Busse siehst du gelb unter dem Gleisbild. Du entscheidest, ob ein Zug am Wendebahnhof auf den Bus wartet." : h.station ? "Der Zug bleibt so lange am Bahnsteig stehen. Das Gleis ist blockiert, Folgezüge auf andere Gleise legen."
+        effect: h.kind === "bahnsteig" ? "Bahnsteiggleis von der Bundespolizei gesperrt. Züge auf andere Gleise legen (Gleisänderung im Zugfenster oder in der Dispo)." : h.kind === "sturm" ? "Vorsorgliche Langsamfahrstelle wegen Sturmwarnung. Fallen trotzdem Bäume, können die Züge rechtzeitig anhalten." : h.kind === "ol" ? "Beide Gleise ohne Strom: keine Zugfahrten. Züge vor der Störung wenden lassen (Netzleitstelle schlägt Ersatzverkehr vor). Die SEV-Busse siehst du gelb unter dem Gleisbild. Du entscheidest, ob ein Zug am Wendebahnhof auf den Bus wartet." : h.station ? "Der Zug bleibt so lange am Bahnsteig stehen. Das Gleis ist blockiert, Folgezüge auf andere Gleise legen."
           : blocks ? "Abschnitt gesperrt: keine Fahrstraßen hinein. Züge davor warten oder werden über das andere Gleis (Gegengleis) geführt." : "Fahrt auf Sicht mit höchstens 30 km/h durch den Abschnitt.",
         trains: h.station ? w.trains.filter((t) => t.fault && t.dwelling && t.stops[t.stopIdx]?.st === h.station).map((t) => t.no) : affected(h.edges) });
     }

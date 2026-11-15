@@ -197,6 +197,7 @@ export class Ops {
         w.log(`${t.no} wartet in ${w.g.stations[D.st].name} auf den Ersatz-Tf (ca. ${Math.round(D.wait / 60)} min)`, "info");
         return null;
       }
+      default: return this.w.life.resolve(c, k, timeout);
     }
     return null;
   }

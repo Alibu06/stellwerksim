@@ -199,7 +199,7 @@ function freight(g: Graph, seed: number): TripSpec[] {
         acc: 0.12 + (1 - mass / 2400) * 0.12, dec: 0.3, mass,
         initialDelay: Math.floor(r() * r() * 1800),
       });
-      t += (3600 / rel.perHour(h)) * (0.6 + r() * 0.8);
+      t += (3600 / (rel.perHour(h) * 1.4)) * (0.6 + r() * 0.8); // etwa 40 % mehr als die Grundlast
     }
   }
   return out;
