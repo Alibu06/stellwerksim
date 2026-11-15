@@ -40,6 +40,8 @@ let mode: "dep" | "arr" = "dep";
 let range = 120;
 let tab = localStorage.getItem("monitor-tab") ?? "lage";
 let selId: number | null = null;
+let bigId: number | null = null;
+let big: { id: number; s?: Record<string, string>; gone?: boolean } | null = null;
 const ui: Record<string, string> = {}; // Auswahl in Listenfeldern über Neuaufbau hinweg
 const trails = new Map<number, { t: number; s: number }[]>(); // Ist-Verlauf je Zug
 
@@ -60,8 +62,10 @@ ch.onmessage = (e) => {
     else if (ok) toast(ok);
     return;
   }
+  if (d?.type === "open") { openBig(Number(d.id)); return; }
   if (d?.type !== "snap") return;
   snap = d.snap as Snapshot;
+  big = d.big ?? null;
   lastMsg = performance.now();
   for (const t of snap.trains) {
     if (!t.live || !isFinite(t.s)) continue;
@@ -74,6 +78,7 @@ ch.onmessage = (e) => {
   render();
 };
 ch.postMessage({ type: "hello" });
+setInterval(() => ch.postMessage({ type: "ping" }), 2000);
 setInterval(() => {
   const on = performance.now() - lastMsg < 3000;
   $("conn").className = on ? "" : "off";
@@ -179,6 +184,12 @@ document.addEventListener("click", (e) => {
       selId = null;
     } break;
     case "radio": if (t) cmd("radio", { id: t.id, text: b.dataset.text, cmd: b.dataset.cmd }); break;
+    case "big": if (t && t.live) openBig(t.id); else toast("Großansicht gibt es für Züge im Bereich", true); break;
+    case "reason": if (t) {
+      const r = (document.getElementById("bigReason") as HTMLSelectElement | null)?.value ?? "";
+      const n = (document.getElementById("bigNote") as HTMLInputElement | null)?.value ?? "";
+      cmd("reason", { id: t.id, reason: r, note: n }, r ? `Ursache für ${t.no} gespeichert` : "Ursache entfernt");
+    } break;
   }
 });
 
@@ -202,6 +213,7 @@ function render() {
   $("nDispo").textContent = nOpen ? String(nOpen) : "";
   $("nLage").textContent = snap.situation.length ? String(snap.situation.filter((x) => !x.planned).length || "") : "";
   renderBoard();
+  if (bigId !== null) renderBig();
   if (tab === "lage") renderLage();
   if (tab === "dispo") renderDispo();
   if (tab === "funk") renderFunk();
@@ -275,6 +287,25 @@ function stopRow(t: SnapTrain, p: SnapStop) {
     <td class="t ${cls(d)}">${arrived ? hm(p.actArr!) : d >= 60 ? hm(p.eta) : "–"}</td><td class="t">${p.dep !== p.arr ? hm(p.dep) : ""}${prog - p.dep >= 60 ? `<small class="warn">${hm(prog)}</small>` : ""}</td><td>${trk}</td></tr>`;
 }
 
+function dispoActs(t: SnapTrain): string {
+  let html = "";
+    if (t.live && t.turnOpts?.length) {
+      html += `<div class="act"><b>Vorzeitig wenden</b><small>${t.turnInto ? `Der Zug endet früher und fährt als ${esc(t.turnInto)} ab dort zurück. Die Halte dahinter entfallen in beide Richtungen.` : "Der Zug endet früher (Teilausfall). Die Halte dahinter entfallen."}</small>
+        <div class="ra"><select data-k="turn${t.id}">${opt(`turn${t.id}`, t.turnOpts.map((c) => [c, stName(c)]))}</select><button class="no" data-a="turn">${t.turnInto ? "Dort wenden" : "Dort enden lassen"}</button></div></div>`;
+    }
+    if (t.live && t.ovSt?.length && t.ovBy?.length) {
+      html += `<div class="act"><b>Überholen lassen</b><small>Der Zug wartet im gewählten Bahnhof, bis der schnellere Zug vorbei ist (höchstens 20 min). Fehlt dort ein Halt, wird ein Betriebshalt eingelegt.</small>
+        <div class="ra"><select data-k="ovst${t.id}">${opt(`ovst${t.id}`, t.ovSt.map((c) => [c, stName(c)]))}</select>
+        <select data-k="ovby${t.id}">${opt(`ovby${t.id}`, t.ovBy.map((o) => [String(o.id), `durch ${short(o.no)}`]))}</select><button data-a="ov">Anordnen</button></div></div>`;
+    }
+    if (!t.live) {
+      const armed = ui.cancelArm === String(t.key);
+      html += `<div class="act"><b>Zugausfall</b><small>Der Zug fährt nicht in deinen Bereich ein. Das lässt sich nicht rückgängig machen.</small>
+        <div class="ra"><button class="no${armed ? " armed" : ""}" data-a="cancel">${armed ? "Wirklich ausfallen lassen? Nochmal klicken" : "Zug ausfallen lassen"}</button></div></div>`;
+    }
+  return html;
+}
+
 function renderDispo() {
   const s = snap!;
   let html = "";
@@ -303,22 +334,9 @@ function renderDispo() {
       <span class="${cls(t.delay)} dl">${d >= 1 ? `+${d} min` : "pünktlich"}</span></div>
       <small>${t.live ? esc(t.where ?? "") : esc(t.status)}${t.live && t.status ? ` · ${esc(t.status)}` : ""}</small>
       ${t.fault ? `<div class="flag bad">${esc(t.fault)}</div>` : ""}${t.hold ? `<div class="flag warn">Halt auf deine Anordnung</div>` : ""}${t.waitFor ? `<div class="flag info">Wartet auf Überholung durch ${esc(t.waitFor)}</div>` : ""}
-      ${t.live ? `<div class="ra"><button data-a="focus">Im Stellwerk zeigen</button><button data-a="funk">Funk</button></div>` : ""}
+      ${t.live ? `<div class="ra"><button data-a="big">Großansicht</button><button data-a="focus">Im Stellwerk zeigen</button><button data-a="funk">Funk</button></div>` : ""}
       <table class="stops"><tr><th>Halt</th><th>an</th><th>Prog.</th><th>ab</th><th>Gleis</th></tr>${t.stops.filter((p) => !p.done || p.actDep === undefined).map((p) => stopRow(t, p)).join("")}</table>`;
-    if (t.live && t.turnOpts?.length) {
-      html += `<div class="act"><b>Vorzeitig wenden</b><small>${t.turnInto ? `Der Zug endet früher und fährt als ${esc(t.turnInto)} ab dort zurück. Die Halte dahinter entfallen in beide Richtungen.` : "Der Zug endet früher (Teilausfall). Die Halte dahinter entfallen."}</small>
-        <div class="ra"><select data-k="turn${t.id}">${opt(`turn${t.id}`, t.turnOpts.map((c) => [c, stName(c)]))}</select><button class="no" data-a="turn">${t.turnInto ? "Dort wenden" : "Dort enden lassen"}</button></div></div>`;
-    }
-    if (t.live && t.ovSt?.length && t.ovBy?.length) {
-      html += `<div class="act"><b>Überholen lassen</b><small>Der Zug wartet im gewählten Bahnhof, bis der schnellere Zug vorbei ist (höchstens 20 min). Fehlt dort ein Halt, wird ein Betriebshalt eingelegt.</small>
-        <div class="ra"><select data-k="ovst${t.id}">${opt(`ovst${t.id}`, t.ovSt.map((c) => [c, stName(c)]))}</select>
-        <select data-k="ovby${t.id}">${opt(`ovby${t.id}`, t.ovBy.map((o) => [String(o.id), `durch ${short(o.no)}`]))}</select><button data-a="ov">Anordnen</button></div></div>`;
-    }
-    if (!t.live) {
-      const armed = ui.cancelArm === String(t.key);
-      html += `<div class="act"><b>Zugausfall</b><small>Der Zug fährt nicht in deinen Bereich ein. Das lässt sich nicht rückgängig machen.</small>
-        <div class="ra"><button class="no${armed ? " armed" : ""}" data-a="cancel">${armed ? "Wirklich ausfallen lassen? Nochmal klicken" : "Zug ausfallen lassen"}</button></div></div>`;
-    }
+    html += dispoActs(t);
     html += `</div>`;
   }
   setHtml($("p-dispo"), html);
@@ -484,3 +502,72 @@ cv.addEventListener("dblclick", (e) => {
   if (id !== null && id > 0) cmd("focus", { id });
 });
 window.addEventListener("resize", () => snap && drawGraph());
+
+// ---------------- Große Zugansicht (alle Bereiche des Zugfensters auf einer Seite) ----------------
+const bigEl = document.createElement("div");
+bigEl.id = "big";
+bigEl.className = "hidden";
+bigEl.innerHTML = `<div class="bighead"><div id="bHead"></div><button data-a="focus">Im Stellwerk zeigen</button><button id="bClose">✕ Zurück zur Übersicht (Esc)</button></div>
+  <div class="bgrid">
+    <div class="bcol"><h4>Übersicht</h4><div id="bInfo"></div><h4>Verspätungsursachen</h4><div id="bVersp"></div></div>
+    <div class="bcol"><h4>Fahrplan</h4><div id="bPlan"></div><h4>Disposition</h4><div id="bDispo"></div></div>
+    <div class="bcol"><h4>Fahrgastinformation</h4><div id="bFis"></div><h4>Funk</h4><div id="bRadio" class="radio"></div><div id="bCmds"></div>
+      <form id="bForm" class="rform"><input id="bIn" placeholder="Freier Funkspruch, z. B. „Warum stehen Sie?“" autocomplete="off"><button>Senden</button></form></div>
+  </div>`;
+document.body.append(bigEl);
+function openBig(id: number) {
+  bigId = id;
+  selId = id;
+  bigEl.classList.remove("hidden");
+  cmd("watch", { id });
+  render();
+}
+function closeBig() {
+  bigId = null;
+  bigEl.classList.add("hidden");
+  cmd("watch", { id: null });
+}
+$("bClose").onclick = closeBig;
+document.addEventListener("keydown", (e) => { if (e.key === "Escape" && bigId !== null) closeBig(); });
+$("bForm").addEventListener("submit", (e) => {
+  e.preventDefault();
+  const i = $("bIn") as HTMLInputElement;
+  if (!i.value.trim() || bigId === null) return;
+  cmd("radio", { id: bigId, text: i.value.trim() });
+  i.value = "";
+});
+function renderBig() {
+  if (!big || big.id !== bigId) return;
+  if (big.gone || !big.s) {
+    setHtml($("bHead"), `<h2>Zug nicht mehr im Bereich</h2>`);
+    setHtml($("bInfo"), `<p class="gone">Der Zug hat den Bereich verlassen oder seine Fahrt beendet.</p>`);
+    for (const id of ["bPlan", "bVersp", "bFis", "bRadio", "bDispo", "bCmds"]) setHtml($(id), "");
+    return;
+  }
+  const S = big.s;
+  setHtml($("bHead"), S.head);
+  setHtml($("bInfo"), S.info);
+  setHtml($("bPlan"), S.plan);
+  setHtml($("bVersp"), S.versp);
+  // Fahrgastinfo nur teilweise tauschen, damit das Laufband nicht neu startet
+  const fis = $("bFis");
+  const box = fis.querySelector(".fisbox");
+  if (!box) setHtml(fis, S.fis);
+  else {
+    const tmp = document.createElement("div");
+    tmp.innerHTML = S.fis;
+    for (const q of [".fistop", ".fisnext", ".fislist", ".fisticker"]) {
+      const a = box.querySelector(q), b = tmp.querySelector(q);
+      if (a && b && a.innerHTML !== b.innerHTML) a.replaceWith(b);
+    }
+  }
+  const log = $("bRadio");
+  if (cache.get(log) !== S.radio) { setHtml(log, S.radio); log.scrollTop = log.scrollHeight; }
+  setHtml($("bCmds"), RADIO_CMDS.map((c) => `<button data-a="radio" data-cmd="${c.id}" data-text="${esc(c.label)}">${esc(c.label)}</button>`).join(""));
+  const t = snap?.trains.find((x) => x.id === bigId);
+  setHtml($("bDispo"), t ? dispoActs(t) || `<p class="empty">Keine dispositiven Maßnahmen möglich (kein Wendebahnhof oder Überholbahnhof vor dem Zug).</p>` : "");
+}
+document.addEventListener("dblclick", (e) => {
+  const r = (e.target as HTMLElement).closest<HTMLElement>("#boardTab tr[data-id]");
+  if (r && Number(r.dataset.id) > 0) openBig(Number(r.dataset.id));
+});

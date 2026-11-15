@@ -378,9 +378,20 @@ async function boot() {
     const e = g.edges[t.body[t.body.length - 1]];
     view.centerOn(g.nodes[e.a].x, g.nodes[e.a].y);
   };
+  // Ist der zweite Monitor offen, erscheint das Zugfenster dort groß mit allen Bereichen auf einer Seite
+  let monSeen = -1e9, bigId: number | null = null, sendBig: (() => void) | null = null;
+  const monitorOpen = () => performance.now() - monSeen < 5000;
   const showTrain = (t: Train) => {
     flags.train = true;
     view.focusTrain = t;
+    if (monitorOpen() && sendBig) {
+      bigId = t.id;
+      tw.hide();
+      view.focusTrain = t;
+      sendBig();
+      toast(`${t.no} im zweiten Fenster geöffnet`);
+      return;
+    }
     tw.show(t);
   };
   const renderCard = () => tw.render();
@@ -576,7 +587,12 @@ async function boot() {
 
   // ---------- Zweiter Monitor ----------
   const ch = new BroadcastChannel(CHANNEL);
-  const sendSnap = () => ch.postMessage({ type: "snap", snap: makeSnapshot(w, g) });
+  const bigData = () => {
+    const t = bigId !== null ? w.trains.find((x) => x.id === bigId) : undefined;
+    return t ? { id: t.id, s: tw.bigSections(t) } : bigId !== null ? { id: bigId, gone: true } : null;
+  };
+  const sendSnap = () => ch.postMessage({ type: "snap", snap: makeSnapshot(w, g), big: bigData() });
+  sendBig = () => { ch.postMessage({ type: "open", id: bigId }); sendSnap(); };
   // Befehle vom zweiten Monitor (Dispo, Zugmeldungen, Funk)
   const monCmd = (d: any): string | null => {
     const tr = () => w.trains.find((t) => t.id === Number(d.id));
@@ -595,10 +611,18 @@ async function boot() {
         radio(w, t, String(d.text), d.cmd || undefined);
         return null;
       }
+      case "watch": bigId = d.id === null || d.id === undefined ? null : Number(d.id); return null;
+      case "reason": {
+        const t = tr();
+        if (!t) return "Zug nicht mehr im Bereich";
+        t.reason = d.reason || undefined;
+        t.reasonNote = d.note || undefined;
+        return null;
+      }
       case "focus": {
         const t = tr();
         if (!t) return "Zug nicht im Bereich";
-        showTrain(t);
+        view.focusTrain = t;
         const ed = g.edges[t.body[t.body.length - 1]];
         view.centerOn(g.nodes[ed.a].x, g.nodes[ed.a].y);
         window.focus();
@@ -609,6 +633,7 @@ async function boot() {
   };
   ch.onmessage = (e) => {
     const d = e.data;
+    if (d?.type === "hello" || d?.type === "ping") monSeen = performance.now();
     if (d?.type === "hello") sendSnap();
     if (d?.type === "accept") { const why = w.acceptReport(Number(d.id)); if (why) toast(why); sendSnap(); }
     if (d?.type === "cmd") {
