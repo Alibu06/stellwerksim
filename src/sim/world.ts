@@ -1,5 +1,5 @@
 import { Extras } from "./extras";
-import { Dir, Graph, nextEdge, otherEnd, trailingOk, vEdge } from "./graph";
+import { Dir, GEdge, Graph, nextEdge, otherEnd, trailingOk, vEdge } from "./graph";
 import { Interlocking, PathDef } from "./interlocking";
 import { Cat, TripSpec, TTStop, rng } from "./timetable";
 
@@ -49,11 +49,18 @@ export interface Train {
   reasonNote?: string;
   extraDwell: number; // Anschluss abwarten (Sekunden, beim nächsten Halt)
   holdFor?: { st: string; sec: number };
-  shunt?: { edges: number[]; label: string }; // laufende Rangierfahrt
+  shunt?: { edges: number[]; label: string; rev?: ShuntTarget["rev"] }; // laufende Rangierfahrt
   shunted?: boolean; // Anschluss abwarten an bestimmtem Bahnhof (Disposition)
   driver: string; // Name Triebfahrzeugführer/in
   tfz: string; // Baureihe
   radio: { t: number; from: "fdl" | "tf"; text: string }[];
+}
+
+export interface ShuntTarget {
+  label: string;
+  dir: Dir;
+  edges: number[];
+  rev?: { node: number; after: number[]; edges: number[] }; // Sägefahrt: nach Richtungswechsel weiter über diese Kanten
 }
 
 export interface Fault {
@@ -632,57 +639,88 @@ export class World {
     return null;
   }
 
-  shuntTargets(t: Train): { label: string; dir: Dir; edges: number[] }[] {
-    const g = this.g, out: { label: string; dir: Dir; edges: number[]; len: number }[] = [];
+  shuntTargets(t: Train): ShuntTarget[] {
+    const g = this.g, out: (ShuntTarget & { len: number })[] = [];
     const own = new Set(t.body);
     // nur innerhalb des Bahnhofs, in dem der Zug steht
     const hs = this.headS(t);
     const st0 = Object.entries(g.stations).sort((a, b) => Math.abs((a[1].s ?? 0) - hs) - Math.abs((b[1].s ?? 0) - hs))[0];
     const s0 = st0[1].s ?? 0;
     const inArea = (e: number) => Math.abs(((g.nodes[g.edges[e].a].s ?? 0) + (g.nodes[g.edges[e].b].s ?? 0)) / 2 - s0) < 1300;
+    const free = (e: number, extra?: Set<number>) => {
+      const E = g.edges[e];
+      return !own.has(e) && !extra?.has(e) && !E.occ && !E.lock && !E.overlap && !E.closed && inArea(e);
+    };
+    const label = (E: GEdge, m: number, d: Dir, rev: boolean) => {
+      const M = g.nodes[m];
+      const dead = (d > 0 ? M.east : M.west).length === 0;
+      return `${st0[1].name} ${E.platform ? `Gleis ${E.platform.track}` : dead ? "Stumpfgleis" : "Nebengleis"} (${d > 0 ? "Richtung Betzdorf" : "Richtung Köln"}${rev ? ", mit Sägefahrt" : ""})`;
+    };
+    const parkable = (E: GEdge, m: number, d: Dir) => {
+      const M = g.nodes[m];
+      const dead = (d > 0 ? M.east : M.west).length === 0;
+      return (E.platform || !E.pref || dead) && E.len >= Math.min(t.len, 200);
+    };
+    // zweiter Teil einer Sägefahrt: von der Weiche aus in Gegenrichtung ins andere Gleis
+    const walk2 = (n: number, d: Dir, path: number[], len: number, used: Set<number>, base: { dir: Dir; edges: number[]; node: number; after: number[]; len: number }) => {
+      if (len > 1200 || path.length > 15) return;
+      const node = g.nodes[n];
+      const opts = d > 0 ? node.east : node.west;
+      for (const e of path.length ? opts : opts.filter((x) => !used.has(x))) {
+        if (!free(e, used)) continue;
+        const E = g.edges[e];
+        const m = d > 0 ? E.b : E.a;
+        const np = [...path, e];
+        if (parkable(E, m, d)) out.push({ label: label(E, m, d, true), dir: base.dir, edges: base.edges, len: base.len + len + E.len, rev: { node: base.node, after: base.after, edges: np } });
+        walk2(m, d, np, len + E.len, used, base);
+      }
+    };
     for (const d of [t.dir, (t.dir * -1) as Dir]) {
       const startEdge = d === t.dir ? t.body[t.body.length - 1] : t.body[0];
       const E0 = g.edges[startEdge];
       const start = d > 0 ? E0.b : E0.a;
-      const walk = (n: number, path: number[], len: number) => {
+      const walk = (n: number, path: number[], len: number, trailing: { node: number; idx: number; dist: number; done: boolean }[]) => {
         if (len > 1800 || path.length > 25) return;
         const node = g.nodes[n];
         const sid = node.sigE || node.sigW;
         if (path.length && (node.portal || (sid && this.il.sig(sid).kind === "block"))) return;
+        // rückliegende Weiche (zwei Gleise hinter uns): Kandidat für eine Sägefahrt
+        const back = d > 0 ? node.west : node.east;
+        const tr = back.length === 2 && path.length ? [...trailing, { node: n, idx: path.length, dist: len, done: false }] : trailing;
         for (const e of d > 0 ? node.east : node.west) {
+          if (!free(e)) continue;
           const E = g.edges[e];
-          if (own.has(e) || E.occ || E.lock || E.overlap || E.closed || !inArea(e)) continue;
           const m = d > 0 ? E.b : E.a;
           const np = [...path, e];
-          const parkable = (E.platform || !E.pref) && E.len >= Math.min(t.len, 200);
-          if (parkable) {
-            const M = g.nodes[m];
-            const dead = (d > 0 ? M.east : M.west).length === 0;
-            const st = st0[1].name;
-            const label = `${st} ${E.platform ? `Gleis ${E.platform.track}` : dead ? "Stumpfgleis" : "Nebengleis"} (${d > 0 ? "Richtung Betzdorf" : "Richtung Köln"})`;
-            out.push({ label, dir: d, edges: np, len: len + E.len });
+          if (parkable(E, m, d)) out.push({ label: label(E, m, d, false), dir: d, edges: np, len: len + E.len });
+          const tr2 = tr.map((x) => ({ ...x }));
+          for (const x of tr2) {
+            if (x.done || len + E.len - x.dist < t.len + 25) continue;
+            x.done = true;
+            const after = np.slice(x.idx);
+            const came = path[x.idx - 1];
+            const used = new Set([...np, ...t.body]);
+            used.delete(came);
+            const other = (d > 0 ? g.nodes[x.node].west : g.nodes[x.node].east).find((b) => b !== came);
+            if (other !== undefined) walk2(x.node, (d * -1) as Dir, [], 0, new Set([...used, came]), { dir: d, edges: np, node: x.node, after, len: len + E.len });
           }
-          walk(m, np, len + E.len);
+          walk(m, np, len + E.len, tr2);
         }
       };
-      walk(start, [], 0);
+      walk(start, [], 0, []);
     }
     // je Ziel nur der kürzeste Weg
-    const best = new Map<string, { label: string; dir: Dir; edges: number[]; len: number }>();
+    const best = new Map<string, ShuntTarget & { len: number }>();
     for (const o of out) if (!best.has(o.label) || best.get(o.label)!.len > o.len) best.set(o.label, o);
-    return [...best.values()].sort((a, b) => a.len - b.len).slice(0, 10);
+    return [...best.values()].sort((a, b) => a.len - b.len).slice(0, 12);
   }
 
-  startShunt(t: Train, target: { label: string; dir: Dir; edges: number[] }): string | null {
-    const why = this.canShunt(t);
-    if (why) return why;
+  // Weichen für eine Rangierfahrt ab der Zugspitze stellen
+  private setShuntSwitches(t: Train, edges: number[]): string | null {
     const g = this.g;
-    for (const e of target.edges) if (g.edges[e].occ || g.edges[e].lock || g.edges[e].closed) return "Fahrweg nicht mehr frei";
-    // Weichen umstellen
-    if (target.dir !== t.dir) this.flip(t);
     let prev = t.body[t.body.length - 1];
     const sw: [number, number][] = [];
-    for (const e of target.edges) {
+    for (const e of edges) {
       const n = this.exitNode(t, prev);
       const node = g.nodes[n];
       if (node.swSide !== undefined) {
@@ -691,15 +729,27 @@ export class World {
         if (want >= 0 && want !== node.swPos) {
           if (this.il.faultySwitches.has(n)) return `Weiche ${node.swName} ist gestört`;
           if (this.il.blockedSwitches.has(n)) return `Weiche ${node.swName} ist gesperrt`;
-          if (side.some((x) => x !== e && x !== prev && (g.edges[x].occ || g.edges[x].lock || g.edges[x].overlap))) return `Weiche ${node.swName} ist verschlossen`;
+          if (side.some((x) => x !== e && x !== prev && (g.edges[x].occ || (g.edges[x].lock && g.edges[x].lock !== -t.id) || g.edges[x].overlap))) return `Weiche ${node.swName} ist verschlossen`;
           sw.push([n, want]);
         }
       }
       prev = e;
     }
-    for (const [n, pos] of sw) this.g.nodes[n].swPos = pos;
-    for (const e of target.edges) g.edges[e].lock = -t.id;
-    t.shunt = { edges: [t.body[t.body.length - 1], ...target.edges], label: target.label };
+    for (const [n, pos] of sw) g.nodes[n].swPos = pos;
+    return null;
+  }
+
+  startShunt(t: Train, target: ShuntTarget): string | null {
+    const why = this.canShunt(t);
+    if (why) return why;
+    const g = this.g;
+    const all = [...target.edges, ...(target.rev?.edges ?? [])];
+    for (const e of all) if (g.edges[e].occ || g.edges[e].lock || g.edges[e].closed) return "Fahrweg nicht mehr frei";
+    if (target.dir !== t.dir) this.flip(t);
+    const err = this.setShuntSwitches(t, target.edges);
+    if (err) return err;
+    for (const e of all) g.edges[e].lock = -t.id;
+    t.shunt = { edges: [t.body[t.body.length - 1], ...target.edges], label: target.label, rev: target.rev };
     t.dwelling = false;
     this.log(`Rangierfahrt ${t.no} nach ${target.label}`, "info");
     return null;
@@ -712,6 +762,24 @@ export class World {
     let rem = head.len - t.headPos;
     for (let i = idx + 1; i < sh.edges.length; i++) rem += g.edges[sh.edges[i]].len;
     rem -= 10;
+    if (rem <= 0.3 && sh.rev) {
+      // Sägefahrt: Richtung wechseln und ins Zielgleis zurückdrücken
+      t.v = 0;
+      const oldTail = t.body[0];
+      this.flip(t);
+      const j = sh.rev.after.indexOf(oldTail);
+      const back = (j >= 0 ? sh.rev.after.slice(0, j) : sh.rev.after).reverse().filter((e) => !t.body.includes(e));
+      const path = [...back, ...sh.rev.edges];
+      const err = this.setShuntSwitches(t, path);
+      if (err) {
+        this.log(`Rangierfahrt ${t.no}: ${err}, Zug bleibt stehen`, "warn");
+        sh.rev = undefined;
+        sh.edges = [t.body[t.body.length - 1]];
+        return;
+      }
+      t.shunt = { edges: [t.body[t.body.length - 1], ...path], label: sh.label };
+      return;
+    }
     if (rem <= 0.3) {
       t.v = 0;
       for (const e of g.edges) if (e.lock === -t.id) e.lock = 0;
@@ -728,7 +796,8 @@ export class World {
     const s = Math.max(0, Math.min(t.v * dt, rem));
     if (s < 0.001) { t.v = Math.max(t.v, 0.5); return; }
     this.move(t, s);
-    for (const e of g.edges) if (e.lock === -t.id && !e.occ && !sh.edges.slice(sh.edges.indexOf(this.headEdge(t).id)).includes(e.id)) e.lock = 0;
+    const keep = new Set([...sh.edges.slice(sh.edges.indexOf(this.headEdge(t).id)), ...(sh.rev ? [...sh.rev.after, ...sh.rev.edges] : [])]);
+    for (const e of g.edges) if (e.lock === -t.id && !e.occ && !keep.has(e.id)) e.lock = 0;
   }
 
   private reverse(t: Train, next: TripSpec) {

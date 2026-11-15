@@ -21,6 +21,12 @@ const fmt = (t: number) => {
   return `${String(Math.floor(s / 3600)).padStart(2, "0")}:${String(Math.floor(s / 60) % 60).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}`;
 };
 const hm = (t: number) => fmt(t).slice(0, 5);
+const htmlCache = new WeakMap<HTMLElement, string>();
+const setHtml = (el: HTMLElement, html: string) => {
+  if (htmlCache.get(el) === html) return;
+  htmlCache.set(el, html);
+  el.innerHTML = html;
+};
 const CAT_COLOR = VIEW_CAT;
 
 async function boot() {
@@ -362,7 +368,7 @@ async function boot() {
   const isMine = (sid: number) => sid && !w.il.sig(sid).auto;
   const renderLists = () => {
     const trains = [...w.trains].sort((a, b) => Number(isMine(b.nextSig)) - Number(isMine(a.nextSig)) || b.waitRed - a.waitRed);
-    $("tab-trains").innerHTML = trains.map((t) => {
+    setHtml($("tab-trains"), trains.map((t) => {
       const ps = t.stops[t.stopIdx];
       const where = t.dwelling ? `hält in <b>${g.stations[ps?.st]?.name ?? ""}</b>` : ps ? `nächster Halt <b>${g.stations[ps.st].name}</b> ${hm(ps.arr)}` : t.trip.exitPortal ? `nach <b>${g.portals[t.trip.exitPortal].label}</b>` : "";
       const sig = t.nextSig ? w.il.sig(t.nextSig) : null;
@@ -371,21 +377,7 @@ async function boot() {
       return `<div class="row ${t.waitRed > 45 ? "waiting" : ""}" data-id="${t.id}"><div class="cat" style="background:${CAT_COLOR[t.cat]}"></div>
         <div class="no">${t.no}</div><div class="info">${where}${sigTxt}<br>${t.trip.from} → ${t.trip.to}</div>
         <div class="dl ${dm >= 6 ? "bad" : dm >= 3 ? "warn" : "ok"}">${dm > 0 ? "+" + dm : "0"}</div></div>`;
-    }).join("");
-    $("tab-next").querySelectorAll<HTMLButtonElement>("[data-acc]").forEach((b) => (b.onclick = () => {
-      const why = w.acceptReport(Number(b.dataset.acc));
-      if (!why) flags.accept = true;
-      if (why) toast(why);
-      renderLists();
-    }));
-    $("tab-trains").querySelectorAll<HTMLElement>(".row").forEach((r) => (r.onclick = () => {
-      const t = w.trains.find((x) => x.id === Number(r.dataset.id));
-      if (t) {
-        showTrain(t);
-        const e = g.edges[t.body[t.body.length - 1]];
-        view.centerOn(g.nodes[e.a].x, g.nodes[e.a].y);
-      }
-    }));
+    }).join(""));
     const open = w.reports.filter((r) => r.kind === "in" && r.state === "offered");
     const outs = w.reports.filter((r) => r.kind === "out" && r.state !== "accepted" && w.trains.some((t) => t.trip === r.trip));
     $("repCount").textContent = open.length ? String(open.length) : "";
@@ -395,15 +387,32 @@ async function boot() {
         return `<div class="rep"><div><b>${r.no}</b> von Fdl ${g.portals[r.portal].label}<br><small>${r.trip.from} → ${r.trip.to} · Einfahrt ca. ${hm(at)}${r.trip.initialDelay >= 180 ? ` (+${Math.round(r.trip.initialDelay / 60)})` : ""}</small></div><button data-acc="${r.id}">Annehmen</button></div>`;
       }).join("") +
       outs.map((r) => `<div class="rep out"><div><b>${r.no}</b> an Fdl ${g.portals[r.portal].label} angeboten<br><small>${r.state === "refused" ? `abgelehnt: ${r.note}` : "warte auf Antwort …"}</small></div></div>`).join("");
-    $("tab-next").innerHTML = repHtml + `<h3>Vorschau</h3><p>Züge, die in den nächsten Minuten in den Bereich einfahren oder bereitgestellt werden.</p>` +
+    setHtml($("tab-next"), repHtml + `<h3>Vorschau</h3><p>Züge, die in den nächsten Minuten in den Bereich einfahren oder bereitgestellt werden.</p>` +
       w.upcoming(40).map((t) => {
         const at = t.entryTime + t.initialDelay;
         const dm = Math.round(t.initialDelay / 60);
         const from = t.entryPortal ? `von ${g.portals[t.entryPortal].label}` : `Bereitstellung ${g.stations[t.stops[0].st].name}`;
         return `<div class="row"><div class="cat" style="background:${CAT_COLOR[t.cat]}"></div><div class="no">${t.no}</div>
           <div class="info">${hm(at)} ${from}<br>${t.from} → ${t.to}</div><div class="dl ${dm >= 6 ? "bad" : dm >= 3 ? "warn" : "ok"}">${dm > 0 ? "+" + dm : "0"}</div></div>`;
-      }).join("");
+      }).join(""));
   };
+  // Klicks in den Listen über Delegation: funktionieren auch, wenn die Liste gerade neu gezeichnet wurde
+  $("tab-next").addEventListener("click", (e) => {
+    const b = (e.target as HTMLElement).closest<HTMLElement>("[data-acc]");
+    if (!b) return;
+    const why = w.acceptReport(Number(b.dataset.acc));
+    if (!why) flags.accept = true;
+    toast(why ?? "Zug angenommen");
+    renderLists();
+  });
+  $("tab-trains").addEventListener("click", (e) => {
+    const r = (e.target as HTMLElement).closest<HTMLElement>(".row");
+    const t = r && w.trains.find((x) => x.id === Number(r.dataset.id));
+    if (!t) return;
+    showTrain(t);
+    const ed = g.edges[t.body[t.body.length - 1]];
+    view.centerOn(g.nodes[ed.a].x, g.nodes[ed.a].y);
+  });
 
   const renderFaults = () => {
     const el = $("tab-faults");

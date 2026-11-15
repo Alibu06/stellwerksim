@@ -749,24 +749,24 @@ export class View {
       }
     }
     for (const b of this.trainBoxes) if (px >= b.x && px <= b.x + b.w && py >= b.y && py <= b.y + b.h) return { kind: "train", train: b.t };
-    let best: Hit | null = null, bd = 12;
+    // Das nächstgelegene Element gewinnt (Signal, Weiche oder Streckenende)
+    let best: Hit | null = null, bd = 13;
     for (const s of this.g.signals) {
       const p = this.sigPos(s);
       const d = Math.hypot(p.x - px, p.y - py);
       if (d < bd) { bd = d; best = { kind: "signal", sig: s }; }
     }
-    if (best) return best;
-    for (const [code, p] of Object.entries(this.g.portals)) {
-      const n = this.g.nodes[p.outNode];
-      const q = this.P(n.x, n.y);
-      if (Math.hypot(q.x - px, q.y - py) < 12) return { kind: "portal", code };
-    }
-    bd = 9;
     for (const n of this.g.nodes) {
       if (n.swSide === undefined) continue;
       const q = this.P(n.x, n.y);
-      const d = Math.hypot(q.x - px, q.y - py);
+      const d = Math.hypot(q.x - px, q.y - py) - 2; // Weichen leicht bevorzugen
       if (d < bd) { bd = d; best = { kind: "switch", node: n.id }; }
+    }
+    for (const [code, p] of Object.entries(this.g.portals)) {
+      const n = this.g.nodes[p.outNode];
+      const q = this.P(n.x, n.y);
+      const d = Math.hypot(q.x - px, q.y - py);
+      if (d < bd) { bd = d; best = { kind: "portal", code }; }
     }
     if (best) return best;
     // Klick auf einen Zugkörper
