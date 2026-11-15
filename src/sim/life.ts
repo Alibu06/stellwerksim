@@ -185,7 +185,7 @@ export class Life {
       const dep = s.dep + (q.initialDelay ?? 0);
       const until = dep - w.time;
       if (until > 1800 || until < -600) continue;
-      const tr = w.dispTrack.get(`${q.key}|${st}`) ?? w.planTrack(st, q.dir, q.line, q.to);
+      const tr = w.dispTrack.get(`${q.key}|${st}`) ?? w.planFor(q, st);
       if (tr !== track) continue;
       const base = q.cat === "RE" || q.cat === "ICE" ? 45 : q.cat === "RB" ? 25 : 30;
       n += base * Math.min(1.5, (1800 - Math.max(0, until)) / 1800 + (q.initialDelay ?? 0) / 1800);

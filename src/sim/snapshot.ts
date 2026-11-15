@@ -51,7 +51,7 @@ export function makeSnapshot(w: World, g: Graph): Snapshot {
       key: trip.key, special: trip.special, exits: !!trip.exitPortal, id: -trip.key, no: trip.no, cat: trip.cat, line: trip.line, from: trip.from, to: trip.to, dir: trip.dir, s: NaN, v: 0,
       delay: trip.initialDelay, live: false, status: trip.entryPortal ? `erwartet von ${g.portals[trip.entryPortal].label}` : "wird bereitgestellt",
       entry: trip.entryTime + trip.initialDelay,
-      stops: trip.stops.map((s) => ({ op: s.op, st: s.st, arr: s.arr, dep: s.dep, eta: s.arr + trip.initialDelay, done: false, plan: w.planTrack(s.st, trip.dir, trip.line, trip.to), disp: w.dispTrack.get(`${trip.key}|${s.st}`) })),
+      stops: trip.stops.map((s) => ({ op: s.op, st: s.st, arr: s.arr, dep: s.dep, eta: s.arr + trip.initialDelay, done: false, plan: w.planFor(trip, s.st), disp: w.dispTrack.get(`${trip.key}|${s.st}`) })),
     });
   }
   return {

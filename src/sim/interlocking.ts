@@ -130,7 +130,7 @@ export class Interlocking {
       if (g.nodes[node].swPos !== pos && this.switchLocked(node)) {
         const br = (g.nodes[node].swSide! > 0 ? g.nodes[node].east : g.nodes[node].west).map((e) => g.edges[e]);
         const onlyOv = br.every((E) => !E.lock && !E.occ);
-        return `Weiche ${g.nodes[node].swName} verschlossen${onlyOv ? " (Durchrutschweg, wird etwa 25 s nach dem Halt des Zuges frei; die Fahrstraße wird vorgemerkt)" : ""}`;
+        return `Weiche ${g.nodes[node].swName} verschlossen${onlyOv ? " (Durchrutschweg, wird wenige Sekunden nach dem Halt des Zuges frei; die Fahrstraße wird vorgemerkt)" : ""}`;
       }
       if (g.nodes[node].swPos !== pos && this.blockedSwitches.has(node)) return `Weiche ${g.nodes[node].swName} ist gesperrt`;
     }

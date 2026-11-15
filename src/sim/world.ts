@@ -43,7 +43,7 @@ export interface Train {
   stopAheadIsPlatform: boolean;
   waitRed: number; // Sekunden vor Halt zeigendem Signal
   standStill: number;
-  stillT?: number; // Sekunden Stillstand außerhalb des Bahnsteighalts
+  stillT?: number; stopT?: number; // Sekunden Stillstand außerhalb des Bahnsteighalts
   reverseAt: number; // geplante Wende
   dissolveAt: number; // Abstellung
   fault?: string; // aktuelle Störung am Zug
@@ -168,6 +168,7 @@ export class World {
     this.life = new Life(this);
     this.phone = new Phone(this);
     // Züge, deren Fahrt bei Spielbeginn schon vorbei ist, entfallen; Wendezüge werden vom Vorgänger übernommen
+    this.allTrips = trips;
     this.pending = trips.filter((t) => !t.turnedFrom && t.entryTime + t.initialDelay >= startTime - 60);
     this.buildUmlauf(trips);
     this.ops.start(trips);
@@ -288,7 +289,7 @@ export class World {
     const t: Train = {
       id: this.nextTrainId++, trip, no: trip.no, cat: trip.cat, len: trip.len, vmax: trip.vmax / 3.6,
       acc: trip.acc, dec: trip.dec, v: 0, dir: trip.dir, body, headPos,
-      stops: trip.stops.map((s) => ({ ...s, done: false, plan: this.planTrack(s.st, trip.dir, trip.line, trip.to) })), stopIdx: 0, dwellUntil: 0, dwelling: false,
+      stops: trip.stops.map((s) => ({ ...s, done: false, plan: this.planFor(trip, s.st) })), stopIdx: 0, dwellUntil: 0, dwelling: false,
       exiting: false, gone: false, delay: trip.initialDelay, delayIn: trip.initialDelay, nextSig: 0, distNextSig: Infinity,
       stopAheadIsPlatform: false, waitRed: 0, standStill: 0, reverseAt: 0, dissolveAt: 0, faultUntil: 0, sight: false, hold: false, causes: trip.initialDelay > 60 ? { [trip.delayCause ?? "Verspätung aus dem Vorbereich"]: trip.initialDelay } : {}, extraDwell: 0, radio: [], ...this.crew(trip),
     };
@@ -341,6 +342,51 @@ export class World {
   // Regelgleis eines Bahnhofs je Fahrtrichtung (durchgehendes Hauptgleis mit Bahnsteig, sonst kleinste Gleisnummer)
   private planCache = new Map<string, string | undefined>();
   trackPlan?: Record<string, string>; // Regelgleise je Linie|Richtung|Bahnhof (aus data/tracks.json)
+  // Regelgleis eines bestimmten Zuges: wie die Linie, außer dort steht planmäßig schon ein anderer Zug (Wende, langer Halt)
+  private allTrips: TripSpec[] = [];
+  private tripPlan?: Map<string, string>;
+  planFor(trip: TripSpec, st: string): string | undefined {
+    if (this.trackPlan && !this.tripPlan) this.buildTripPlan();
+    return this.tripPlan?.get(`${trip.key}|${st}`) ?? this.planTrack(st, trip.dir, trip.line, trip.to);
+  }
+  planConflicts: string[] = [];
+  private buildTripPlan() {
+    const m = new Map<string, string>(); this.tripPlan = m;
+    const cand = new Map<string, Set<string>>();
+    for (const [k, v] of Object.entries(this.trackPlan!)) { const [, d, st] = k.split("|"); const kk = `${st}|${d}`; if (!cand.has(kk)) cand.set(kk, new Set()); cand.get(kk)!.add(v); }
+    const vis: { st: string; a: number; b: number; dir: Dir; def: string; keys: string[]; no: string }[] = [];
+    for (const t0 of this.allTrips) {
+      if (t0.cat === "G" || t0.turnedFrom) continue;
+      const seen = new Set<number>();
+      for (let cur: TripSpec | undefined = t0; cur && !seen.has(cur.key); cur = cur.turnInto) {
+        seen.add(cur.key);
+        const c = cur;
+        c.stops.forEach((s, i) => {
+          if (i === 0 && c.turnedFrom && c.turnedFrom.stops[c.turnedFrom.stops.length - 1]?.st === s.st) return; // beim Vorgänger erfasst
+          const last = i === c.stops.length - 1 && !c.exitPortal;
+          const keys = [`${c.key}|${s.st}`];
+          let b = s.dep + 60;
+          if (last && c.turnInto && c.turnInto.stops[0]?.st === s.st) { keys.push(`${c.turnInto.key}|${s.st}`); b = c.turnInto.stops[0].dep + 60; }
+          else if (last) b = s.dep + 600;
+          const a = i === 0 && !c.entryPortal && !c.turnedFrom ? s.dep - 900 : s.arr - 60;
+          const def = this.planTrack(s.st, c.dir, c.line, c.to);
+          if (def) vis.push({ st: s.st, a, b, dir: c.dir, def, keys, no: c.no });
+        });
+      }
+    }
+    vis.sort((x, y) => x.a - y.a);
+    const occ = new Map<string, { a: number; b: number; no: string }[]>();
+    const who = (st: string, tr: string, a: number, b: number) => (occ.get(`${st}|${tr}`) ?? []).find((o) => o.a < b && a < o.b);
+    for (const v of vis) {
+      let tr = v.def;
+      const o = who(v.st, tr, v.a, v.b);
+      if (o) {
+        const alt = [...(cand.get(`${v.st}|${v.dir}`) ?? [])].find((x) => x !== tr && !who(v.st, x, v.a, v.b));
+        if (alt) { tr = alt; for (const k of v.keys) m.set(k, tr); this.planConflicts.push(`${v.no} ${v.st}: Gl ${v.def} (dort ${o.no}) -> ${tr}`); }
+      }
+      const k = `${v.st}|${tr}`; if (!occ.has(k)) occ.set(k, []); occ.get(k)!.push({ a: v.a, b: v.b, no: v.no });
+    }
+  }
   planTrack(st: string, dir: Dir, line = "", to = ""): string | undefined {
     if (this.trackPlan) return this.trackPlan[`${line}|${dir}|${st}|${to}`];
     const k = `${st}${dir}`;
@@ -509,7 +555,8 @@ export class World {
     // Steht der Zug 30 s, braucht er keinen Durchrutschweg mehr: auflösen, damit die Weichen dahinter frei werden
     // (langsames Vorziehen an das Signal nach dem Halt zählt nicht als Weiterfahrt)
     t.stillT = t.v < 3 ? (t.stillT ?? 0) + dt : 0;
-    if (t.stillT > 25 && t.v < 0.05) this.il.releaseOverlapForTrain(t.id);
+    t.stopT = t.v < 0.05 ? (t.stopT ?? 0) + dt : 0;
+    if (t.stopT > 4) this.il.releaseOverlapForTrain(t.id);
     if (t.dwelling) {
       this.dwell(t);
       if (t.gone) return;
@@ -549,7 +596,7 @@ export class World {
         t.waitRed += dt;
         this.score.waitMinutes += dt / 60;
         if (Math.abs(t.waitRed - 180) < dt / 2) this.log(`${t.no} wartet seit 3 min vor ${this.il.sig(t.nextSig).name}`, "warn");
-        if (t.standStill > 20) this.il.releaseOverlapForTrain(t.id);
+        if (t.standStill > 4) this.il.releaseOverlapForTrain(t.id);
       }
       if (la.platformStop && la.stopDist < 4) this.arrive(t, false);
       return;
@@ -730,7 +777,7 @@ export class World {
         s.done = true;
         this.tripDone(t);
       }
-      if (s.actArr !== undefined && this.time - s.actArr > 30) this.il.releaseOverlapForTrain(t.id);
+      if (s.actArr !== undefined && this.time - s.actArr > 5) this.il.releaseOverlapForTrain(t.id);
       if (t.trip.turnInto && this.time >= t.reverseAt) this.reverse(t, t.trip.turnInto);
       else if (!t.trip.turnInto && (t.parked || t.bereit || t.rescue)) return;
       else if (!t.trip.turnInto && this.time >= t.dissolveAt) {
@@ -743,7 +790,7 @@ export class World {
       return;
     }
     // Durchrutschweg hinter dem Bahnsteig nach 30 s Stillstand auflösen, damit die Weichen dahinter frei werden
-    if (s.actArr !== undefined && this.time - s.actArr > 30) this.il.releaseOverlapForTrain(t.id);
+    if (s.actArr !== undefined && this.time - s.actArr > 5) this.il.releaseOverlapForTrain(t.id);
     if (this.time < t.dwellUntil || t.hold) return;
     if (t.waitBus && this.ops.busHolds(t)) return;
     if (t.waitFor && t.waitFor.st === s.st) {
@@ -831,7 +878,7 @@ export class World {
       if (pl && pl.st === st && this.time >= dep - 900) { this.takeOver(t, q); continue; }
       // in Bereichen ohne Spieler (oder kurz vor Abfahrt) rangiert der Tf selbst
       if (this.time < dep - 600 || (this.manualAreas.has(st) && this.time < dep - 240)) continue;
-      const want = this.planTrack(st, q.dir, q.line, q.to);
+      const want = this.planFor(q, st);
       const tg = this.shuntTargets(t).filter((x) => { const E = this.lastEdgeOf(x); return E.platform?.st === st && E.len >= t.len; })
         .sort((a, b) => Number(this.lastEdgeOf(b).platform!.track === want) - Number(this.lastEdgeOf(a).platform!.track === want))[0];
       if (tg && !this.startShunt(t, tg)) { t.parked = false; t.radio.push({ t: this.time, from: "tf", text: `${q.no}: Ich setze zur Bereitstellung nach ${tg.label} um.` }); }
@@ -841,7 +888,7 @@ export class World {
   private takeOver(t: Train, q: TripSpec) {
     if (q.dir !== t.dir) this.flip(t);
     t.trip = q; t.no = q.no;
-    t.stops = q.stops.map((s) => ({ ...s, done: false, plan: this.planTrack(s.st, q.dir, q.line, q.to) }));
+    t.stops = q.stops.map((s) => ({ ...s, done: false, plan: this.planFor(q, s.st) }));
     for (const st of t.stops) st.disp = this.dispTrack.get(`${q.key}|${st.st}`);
     t.stops[0].track = this.headEdge(t).platform?.track;
     t.stops[0].actArr = this.time;
@@ -1490,7 +1537,7 @@ export class World {
     if (flip) this.flip(t, first.len, tailPos);
     t.trip = next;
     t.no = next.no;
-    t.stops = next.stops.map((s) => ({ ...s, done: false, plan: this.planTrack(s.st, next.dir, next.line, next.to) }));
+    t.stops = next.stops.map((s) => ({ ...s, done: false, plan: this.planFor(next, s.st) }));
     t.sev = undefined;
     t.stops[0].track = this.headEdge(t).platform?.track;
     t.stopIdx = 0;

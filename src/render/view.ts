@@ -262,6 +262,7 @@ export class View {
     this.drawSignals(ctx);
     this.drawPortals(ctx);
     this.drawTrainLabels(ctx);
+    this.drawIncidents(ctx);
     if (this.editBreaks) this.drawBreakEditor(ctx);
     if (this.mark) {
       const p = this.P(this.mark.x, this.mark.y);
@@ -651,6 +652,44 @@ export class View {
         ctx.lineWidth = 2;
         ctx.strokeRect(pb.x - 6, pb.y - 6, 12, 12);
       }
+    }
+  }
+
+  // Einsätze und offene Anliegen direkt im Gleisbild: Symbol mit kurzem Text über der Stelle
+  private drawIncidents(ctx: CanvasRenderingContext2D) {
+    const w = this.w, g = this.g, now = w.time;
+    const spots = w.phone.spots();
+    if (!spots.length) return;
+    const blink = Math.floor(performance.now() / 500) % 2 === 0;
+    const mid = (eid: number) => { const E = g.edges[eid], A = g.nodes[E.a], B = g.nodes[E.b]; const a = this.P(A.x + 1e-6, A.y), b = this.P(B.x - 1e-6, B.y); return Math.abs(a.y - b.y) > 80 ? a : { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 }; };
+    const placed: { x: number; y: number }[] = [];
+    for (const sp of spots) {
+      let p: { x: number; y: number } | undefined;
+      if (sp.train !== undefined) { const t = w.trains.find((x) => x.id === sp.train); if (t?.body.length) p = mid(t.body[t.body.length - 1]); }
+      if (!p && sp.edges?.length) p = mid(sp.edges[Math.floor(sp.edges.length / 2)]);
+      if (!p && sp.node !== undefined) { const n = g.nodes[sp.node]; p = this.P(n.x, n.y); }
+      if (!p && sp.sig !== undefined) { const n = g.nodes[g.signals.find((x) => x.id === sp.sig)?.node ?? -1]; if (n) p = this.P(n.x, n.y); }
+      if (!p && sp.crossing !== undefined) { const c = w.ext.crossings.find((x) => x.id === sp.crossing); if (c) p = mid(c.edges[0]); }
+      if (!p) continue;
+      let y = p.y - 26 * this.k;
+      while (placed.some((q) => Math.abs(q.x - p!.x) < 140 * this.k && Math.abs(q.y - y) < 16 * this.k)) y -= 17 * this.k;
+      placed.push({ x: p.x, y });
+      const status = sp.state === "call" ? "anrufen!" : sp.state === "coming" ? `unterwegs, ca. ${Math.max(1, Math.round(((sp.eta ?? now) - now) / 60))} min` : sp.state === "site" ? "vor Ort" : "";
+      const text = `${sp.icon} ${sp.title}${status ? ` · ${status}` : ""}`;
+      ctx.font = this.sans(9, 600);
+      const tw = ctx.measureText(text).width + 10 * this.k, th = 14 * this.k;
+      const col = sp.state === "call" ? (blink ? COLORS.red : COLORS.fault) : sp.state === "coming" ? COLORS.fault : sp.state === "site" ? COLORS.target : COLORS.textDim;
+      ctx.strokeStyle = col; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(p.x, p.y - 4 * this.k); ctx.lineTo(p.x, y + th / 2); ctx.stroke();
+      ctx.fillStyle = tc("#0b1016");
+      roundRect(ctx, p.x - tw / 2, y - th / 2, tw, th, 3);
+      ctx.fill();
+      ctx.lineWidth = sp.state === "call" ? 2 : 1;
+      ctx.stroke();
+      ctx.fillStyle = sp.state === "info" ? COLORS.text : col;
+      ctx.textAlign = "center"; ctx.textBaseline = "middle";
+      ctx.fillText(text, p.x, y + 0.5);
+      ctx.textBaseline = "alphabetic";
     }
   }
 

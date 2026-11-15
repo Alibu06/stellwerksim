@@ -23,7 +23,10 @@ export interface Matter {
   data?: any;
   choice?: { contact: Contact; opts: { k: string; label: string }[] };
   done?: boolean;
+  auto?: boolean; // vom Nachbarn erledigt (nicht im Bereich des Spielers)
+  at?: number; // Helfer vor Ort ab
 }
+export interface Spot { icon: string; title: string; state: "call" | "coming" | "site" | "info"; eta?: number; edges?: number[]; train?: number; node?: number; sig?: number; crossing?: number; sPos?: number }
 export interface PhoneLine { t: number; who: string; text: string; me?: boolean }
 
 const TIMEOUT = 1200;
@@ -46,11 +49,68 @@ export class Phone {
 
   open() { return this.matters.filter((m) => !m.done); }
 
+  // Was gerade im Gleisbild markiert werden soll: offene Anliegen und laufende Einsätze mit Ort
+  spots(): Spot[] {
+    const w = this.w, now = w.time, out: Spot[] = [];
+    const used = new Set<number>();
+    const icon = (c: Contact) => CONTACTS.find((x) => x.k === c)!.icon;
+    for (const m of this.matters) {
+      if (m.auto) continue;
+      const D = m.data ?? {};
+      const sp: Spot = { icon: icon(m.need[0]), title: m.title, state: m.done ? (now < (m.at ?? 0) ? "coming" : "site") : "call", eta: m.at };
+      let active = !m.done;
+      const h = m.ref ? w.ext.happenings.find((x) => x.id === m.ref) : undefined;
+      switch (m.kind) {
+        case "personen": case "baum": case "feuer": case "einschalten": case "pkw": case "ol": case "notarzt": case "polizei":
+          if (h) { used.add(h.id); active = true; if (h.train !== undefined) sp.train = h.train; else sp.edges = h.edges; } else active = false;
+          break;
+        case "bahnsteig": {
+          const hb = w.ext.happenings.find((x) => x.kind === "bahnsteig" && x.station === D.st);
+          if (hb) { used.add(hb.id); active = true; }
+          sp.edges = D.edges; if (!hb && m.done) active = false;
+          break;
+        }
+        case "weiche": case "signal": case "bue": {
+          const f = w.faults.find((x) => x.id === m.ref);
+          if (!f) { active = false; break; }
+          active = true;
+          if (m.kind === "weiche") sp.node = f.target; else if (m.kind === "signal") sp.sig = f.target; else sp.crossing = f.target;
+          break;
+        }
+        case "medizin": {
+          const t = w.trains.find((x) => x.id === D.train);
+          if (!t) { active = false; break; }
+          sp.train = t.id;
+          if (m.done) active = !!t.medStop || (t.fault === "Rettungsdienst im Zug" && now < t.dwellUntil);
+          break;
+        }
+        case "liegen":
+          sp.train = D.train ?? m.ref;
+          if (m.done) active = w.rescues.some((R) => R.broken === sp.train);
+          break;
+        case "notruf": {
+          const n = w.ops.notruf;
+          if (!n) { active = false; break; }
+          sp.train = n.trains[0]; if (m.done) active = n.clearAt > now; sp.sPos = n.s;
+          break;
+        }
+      }
+      if (active) out.push(sp);
+    }
+    // laufende Ereignisse ohne Anruf (Nachbarbereich oder schon geklärt)
+    const IC: Record<string, string> = { feuer: "🚒", personen: "🚓", notarzt: "🚑", polizei: "🚓", baum: "🌳", pkw: "🚗", ol: "⚡", bahnsteig: "🚓", sturm: "🌬️" };
+    for (const h of w.ext.happenings) {
+      if (used.has(h.id) || h.until <= now || h.until - now > 86400 * 50) continue;
+      out.push({ icon: IC[h.kind] ?? "⚠", title: h.text.split(":")[0], state: "info", edges: h.train === undefined ? h.edges : undefined, train: h.train });
+    }
+    return out;
+  }
+
   // Neues Anliegen. Liegt es nicht im Bereich des Spielers, erledigt es der Nachbar sofort.
   add(kind: MatterKind, title: string, where: string, need: Contact[], ref: number, mine: boolean, data?: any, choice?: Matter["choice"]): Matter {
     const m: Matter = { id: this.id++, kind, title, where, t: this.w.time, need, called: [], ref, data, choice };
     this.matters.push(m);
-    if (!mine) { m.called = [...need]; this.resolve(m, true); }
+    if (!mine) { m.auto = true; m.called = [...need]; this.resolve(m, true); }
     else this.w.log(`📞 Anliegen: ${title} (${where}). Wen rufst du an? (Reiter „Zugmeldungen“, Abschnitt Telefon)`, "warn");
     return m;
   }
@@ -116,7 +176,7 @@ export class Phone {
   private resolve(m: Matter, auto: boolean) {
     const w = this.w, r = this.r, D = (m.data ??= {});
     const arr = D.arr ?? (auto ? 0 : 600 + r() * 600);
-    m.done = true;
+    m.done = true; m.at = w.time + arr;
     const H = () => w.ext.happenings.find((h) => h.id === m.ref);
     switch (m.kind) {
       case "personen": case "baum": case "pkw": case "ol": {
