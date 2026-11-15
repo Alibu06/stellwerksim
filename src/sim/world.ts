@@ -585,7 +585,7 @@ export class World {
         s.done = true;
         this.tripDone(t);
       }
-      if (s.actArr !== undefined && this.time - s.actArr > 30 && this.time - s.actArr < 32) this.il.releaseOverlapForTrain(t.id);
+      if (s.actArr !== undefined && this.time - s.actArr > 30) this.il.releaseOverlapForTrain(t.id);
       if (t.trip.turnInto && this.time >= t.reverseAt) this.reverse(t, t.trip.turnInto);
       else if (!t.trip.turnInto && this.time >= t.dissolveAt) {
         for (const e of t.body) this.vacate(e);
@@ -596,7 +596,7 @@ export class World {
       return;
     }
     // Durchrutschweg hinter dem Bahnsteig nach 30 s Stillstand auflösen, damit die Weichen dahinter frei werden
-    if (s.actArr !== undefined && this.time - s.actArr > 30 && this.time - s.actArr < 32) this.il.releaseOverlapForTrain(t.id);
+    if (s.actArr !== undefined && this.time - s.actArr > 30) this.il.releaseOverlapForTrain(t.id);
     if (this.time < t.dwellUntil || t.hold) return;
     s.done = true;
     s.actDep = this.time;
@@ -798,6 +798,15 @@ export class World {
     if (typeof endSig === "string" && this.zugmeldung) {
       const t = this.trains.find((x) => x.nextSig === startSig);
       if (t && t.trip.exitPortal === endSig && !this.outAccepted(t)) return `${t.no} ist vom Nachbarn noch nicht angenommen (Zugmeldung)`;
+    }
+    // Zug, der hier endet und wendet: keine Ausfahrt in die alte Richtung stellen (blockiert sonst die Weichen)
+    const here = this.trains.find((x) => x.nextSig === startSig && x.dwelling && x.distNextSig < 400);
+    if (here && here.stopIdx === here.stops.length - 1 && !here.trip.exitPortal) {
+      const nx = here.trip.turnInto;
+      const at = nx ? Math.max(here.reverseAt, nx.stops[0].dep) : 0;
+      const hhmm = `${String(Math.floor((at % 86400) / 3600)).padStart(2, "0")}:${String(Math.floor(at / 60) % 60).padStart(2, "0")}`;
+      if (!nx) return `${here.no} endet hier und wird abgestellt. Keine Ausfahrt nötig (Rechtsklick auf den Zug: Rangieren)`;
+      if (nx.dir !== here.dir) return `${here.no} endet hier und fährt um ${hhmm} als ${nx.no} in die Gegenrichtung (${nx.to}). Ausfahrt erst dann am Signal auf der anderen Seite stellen`;
     }
     cands.sort((a, b) => Number(a.diverging) - Number(b.diverging) || a.len - b.len);
     let why: string | null = null;
