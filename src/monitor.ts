@@ -154,6 +154,7 @@ document.addEventListener("change", (e) => {
   const el = e.target as HTMLSelectElement;
   if (el.dataset.k) ui[el.dataset.k] = el.value;
   if (el.dataset.k === "sel") select(el.value ? Number(el.value) : null);
+  if (el.dataset.zl) { cmd("zl", { key: Number(el.dataset.zl), mode: el.value }, "Zuglenkung für den Zug geändert"); el.blur(); }
   if (el.dataset.trk) {
     const t = selTrain();
     if (t) cmd("track", { key: t.key, st: el.dataset.trk, track: el.value }, el.value ? `${t.no}: Gleisänderung in ${stName(el.dataset.trk)} auf Gleis ${el.value}` : `${t.no}: wieder Regelgleis in ${stName(el.dataset.trk)}`);

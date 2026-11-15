@@ -664,6 +664,8 @@ async function boot() {
         radio(w, t, String(d.text), d.cmd || undefined);
         return null;
       }
+      case "zl": return w.setZl(Number(d.key), String(d.mode));
+      case "order": return w.issueOrder(Number(d.id), String(d.kind), Number(d.v ?? 40), String(d.reason ?? ""));
       case "watch": bigId = d.id === null || d.id === undefined ? null : Number(d.id); return null;
       case "reason": {
         const t = tr();

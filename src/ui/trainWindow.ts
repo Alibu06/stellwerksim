@@ -129,6 +129,7 @@ export class TrainWindow {
           <tr><td>Nächstes Signal</td><td>${t.nextSig ? `${w.il.sig(t.nextSig).name} in ${Math.round(t.distNextSig)} m` : "–"}</td></tr>
           <tr><td>Weiter</td><td>${t.trip.exitPortal ? `Richtung ${g.portals[t.trip.exitPortal].label}` : t.trip.turnInto ? `wendet als ${t.trip.turnInto.no}` : "endet hier"}</td></tr>
           ${w.umlaufNo(t.trip) ? `<tr><td>Umlauf</td><td>kommt zurück als ${w.umlaufNo(t.trip)}</td></tr>` : ""}
+          <tr><td>Zuglenkung</td><td><select class="zlsel" data-zl="${t.trip.key}">${[["", "wie am Signal"], ["auto", "immer automatisch"], ["aus", "aus (ich stelle)"]].map(([v, l]) => `<option value="${v}" ${(w.zlMode.get(t.trip.key) ?? "") === v ? "selected" : ""}>${l}</option>`).join("")}</select></td></tr>
         </table>
         <div class="tact"><button data-a="center">Im Gleisbild zeigen</button><button data-a="${t.hold ? "go" : "hold"}">${t.hold ? "Halt aufheben" : "Halt anordnen"}</button></div>`;
   }
@@ -227,6 +228,11 @@ export class TrainWindow {
       i.value = "";
       this.renderRadioLog();
     };
+    this.el.querySelectorAll<HTMLSelectElement>("select.zlsel").forEach((sel) => (sel.onchange = () => {
+      this.w.setZl(t.trip.key, sel.value);
+      sel.blur();
+      this.render(true);
+    }));
     this.el.querySelectorAll<HTMLSelectElement>("select.trk").forEach((sel) => (sel.onchange = () => {
       const why = this.w.setTrack(t.trip.key, sel.dataset.st!, sel.value);
       this.toast(why ?? `Gleisänderung für ${t.no} angeordnet`);

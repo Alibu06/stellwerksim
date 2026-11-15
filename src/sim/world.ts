@@ -46,6 +46,7 @@ export interface Train {
   fault?: string; // aktuelle Störung am Zug
   faultUntil: number;
   sight: boolean; // Fahrt auf Sicht nach Ersatzsignal
+  zsCap?: number; zsLeft?: number; // Zs 3 hinter dem zuletzt passierten Signal
   orderV?: number; // Höchstgeschwindigkeit laut Befehl (km/h), gilt bis zum nächsten Hauptsignal
   raeum?: number; // Räumungsprüfung für diesen Achszählabschnitt
   hold: boolean; // Halt auf Anordnung des Fahrdienstleiters (Funk)
@@ -400,6 +401,7 @@ export class World {
     };
     { const ex = this.exitNode(t, head.id); pts(head.id, ex === head.a ? head.b : head.a, -t.headPos); }
     const horizon = Math.max(1500, (t.vmax * t.vmax) / (2 * t.dec) + 800);
+    let zsCap = Infinity, zsUntil = -1;
     while (d < horizon && d < stopDist) {
       const n = this.exitNode(t, eid);
       const node = g.nodes[n];
@@ -425,6 +427,11 @@ export class World {
         } else if (sight && d > 0) {
           sight = false;
         }
+        // Zs 3: angezeigte Geschwindigkeit gilt, bis der Zug den Weichenbereich verlassen hat
+        if (s.kind === "main" && this.il.proceeds(s, this.time)) {
+          const a = this.il.aspect(s, this.time);
+          if (a.zs3) { zsCap = a.zs3 * 10; zsUntil = d + 300 + t.len; } else zsCap = Infinity;
+        }
       }
       if (node.portal && g.portals[node.portal].outNode === n && (t.dir > 0 ? node.east : node.west).length === 0) break;
       const ne = nextEdge(g, n, t.dir);
@@ -447,7 +454,7 @@ export class World {
           break;
         }
         limits.push({ d, v: Math.min(vEdge(NE), 40) / 3.6 });
-      } else limits.push({ d, v: vEdge(NE) / 3.6 });
+      } else limits.push({ d, v: Math.min(vEdge(NE), d < zsUntil ? zsCap : Infinity) / 3.6 });
       if (ps && NE.platform?.st === ps.st && d + NE.len - this.platMargin(t, NE.len) < stopDist) {
         stopDist = d + NE.len - this.platMargin(t, NE.len);
         platformStop = true;
@@ -484,6 +491,7 @@ export class World {
       this.log(`${t.no}: Störung behoben, Zug fährt weiter`, "good");
     }
     for (const l of la.limits) allowed = Math.min(allowed, Math.sqrt(l.v * l.v + 2 * t.dec * l.d));
+    if (t.zsLeft && t.zsLeft > 0 && t.zsCap) allowed = Math.min(allowed, t.zsCap / 3.6);
     if (la.stopDist < Infinity) {
       const sd = la.stopDist;
       let vs = sd > 2 ? Math.sqrt(2 * t.dec * (sd - 2)) : 0;
@@ -511,6 +519,7 @@ export class World {
     }
     t.standStill = 0;
     t.waitRed = 0;
+    if (t.zsLeft) t.zsLeft = Math.max(0, t.zsLeft - s);
     this.move(t, s);
   }
 
@@ -546,7 +555,11 @@ export class World {
             this.il.zs1.delete(sid);
             t.sight = true;
           } else this.incident(`${t.no} hat ${sg.name} in Haltstellung überfahren!`);
-        } else { t.sight = false; t.orderV = undefined; }
+        } else {
+          t.sight = false; t.orderV = undefined;
+          const a = sg.kind === "main" ? this.il.aspect(sg, this.time) : undefined;
+          if (a?.zs3) { t.zsCap = a.zs3 * 10; t.zsLeft = 300 + t.len; } else if (sg.kind === "main") t.zsLeft = 0;
+        }
         this.il.passed(sg, t.id);
       }
       t.headPos -= head.len;
@@ -986,7 +999,10 @@ export class World {
       .sort((a, b) => b.waitRed - a.waitRed || a.distNextSig - b.distNextSig);
     for (const t of cands) {
       const s = this.il.sig(t.nextSig);
-      if (!s.auto || s.route) continue;
+      // Zuglenkung pro Zug: "auto" = auch an selbst gestellten Signalen automatisch, "aus" = nie (außer Blocksignalen)
+      const zl = this.zlMode.get(t.trip.key);
+      const autoHere = s.kind === "block" ? s.auto : zl === "auto" ? true : zl === "aus" ? false : s.auto;
+      if (!autoHere || s.route) continue;
       const paths = this.il.paths.get(s.id) ?? [];
       if (!paths.length) continue;
       if (s.kind === "block") {
@@ -1327,6 +1343,16 @@ export class World {
     return null;
   }
 
+
+  // ---------------- Zuglenkung pro Zug ----------------
+  zlMode = new Map<number, "auto" | "aus">();
+  setZl(tripKey: number, mode: string) {
+    const trip = this.trains.find((t) => t.trip.key === tripKey)?.trip ?? this.pending.find((x) => x.key === tripKey);
+    if (!trip) return "Zug nicht gefunden";
+    if (mode === "auto" || mode === "aus") this.zlMode.set(tripKey, mode); else this.zlMode.delete(tripKey);
+    this.log(`Zuglenkung für ${trip.no}: ${mode === "auto" ? "immer automatisch (auch in deinem Stellbereich)" : mode === "aus" ? "aus, du stellst alle Fahrstraßen selbst" : "wie am jeweiligen Signal eingestellt"}`, "info");
+    return null;
+  }
 
   // ---------------- Arbeitsbuch (Nachweis der Ersatzhandlungen) ----------------
   book: { t: number; kind: string; text: string }[] = [];
