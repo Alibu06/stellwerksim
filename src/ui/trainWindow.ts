@@ -128,6 +128,9 @@ export class TrainWindow {
           <tr><td>Tf</td><td>${esc(t.driver)}</td></tr>
           <tr><td>Nächstes Signal</td><td>${t.nextSig ? `${w.il.sig(t.nextSig).name} in ${Math.round(t.distNextSig)} m` : "–"}</td></tr>
           <tr><td>Weiter</td><td>${t.trip.exitPortal ? `Richtung ${g.portals[t.trip.exitPortal].label}` : t.trip.turnInto ? `wendet als ${t.trip.turnInto.no}` : "endet hier"}</td></tr>
+          ${t.trip.special === "Lü" ? `<tr><td>Besonderheit</td><td class="warn">Lü-Sendung (Lademaßüberschreitung): auf der freien Strecke darf auf dem Nachbargleis kein Zug entgegenkommen</td></tr>` : t.trip.special ? `<tr><td>Sonderzug</td><td>${esc(t.trip.special)}</td></tr>` : ""}
+          ${t.sev ? `<tr><td>Ersatzverkehr</td><td class="warn">${esc(t.sev)}</td></tr>` : ""}
+          ${w.ops.crewChange.get(t.trip.key) ? `<tr><td>Personal</td><td>Personalwechsel in ${esc(g.stations[w.ops.crewChange.get(t.trip.key)!].name)}</td></tr>` : ""}
           ${w.umlaufNo(t.trip) ? `<tr><td>Umlauf</td><td>kommt zurück als ${w.umlaufNo(t.trip)}</td></tr>` : ""}
           <tr><td>Zuglenkung</td><td><select class="zlsel" data-zl="${t.trip.key}">${[["", "wie am Signal"], ["auto", "immer automatisch"], ["aus", "aus (ich stelle)"]].map(([v, l]) => `<option value="${v}" ${(w.zlMode.get(t.trip.key) ?? "") === v ? "selected" : ""}>${l}</option>`).join("")}</select></td></tr>
         </table>
@@ -197,8 +200,9 @@ export class TrainWindow {
     const next = rest[0];
     const dm = Math.round(w.liveDelay(t) / 60);
     const reason = t.reason ?? Object.entries(t.causes).filter(([, s]) => s > 90).sort((a, b) => b[1] - a[1])[0]?.[0];
-    const ticker = dm >= 3 ? `Wir haben derzeit eine Verspätung von ${dm} Minuten${reason ? `. Grund: ${reason.replace(/^Halt vor Signal.*/, "Verzögerungen im Betriebsablauf")}` : ""}. Wir bitten um Entschuldigung.`
-      : t.dwelling ? "Bitte beachten Sie beim Aussteigen die Lücke zwischen Zug und Bahnsteig." : "Willkommen an Bord. Fahrscheine bitte bereithalten.";
+    const sevTxt = t.sev ? `Wegen einer Streckensperrung fährt dieser Zug nur bis ${t.sev.replace(/^Ersatzverkehr mit Bussen ab /, "")}. Von dort Ersatzverkehr mit Bussen. ` : "";
+    const ticker = sevTxt + (dm >= 3 ? `Wir haben derzeit eine Verspätung von ${dm} Minuten${reason ? `. Grund: ${reason.replace(/^Halt vor Signal.*/, "Verzögerungen im Betriebsablauf")}` : ""}. Wir bitten um Entschuldigung.`
+      : t.dwelling ? "Bitte beachten Sie beim Aussteigen die Lücke zwischen Zug und Bahnsteig." : "Willkommen an Bord. Fahrscheine bitte bereithalten.");
     const isLast = !t.trip.exitPortal && rest.length <= 1;
     const nsoll = next ? next.track ?? next.disp ?? next.plan : undefined;
     const chg = next && nsoll && next.plan && nsoll !== next.plan ? nsoll : undefined;

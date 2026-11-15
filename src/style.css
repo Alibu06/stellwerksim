@@ -158,6 +158,10 @@ main { position: absolute; top: 52px; bottom: 0; left: 0; right: 0; }
 .rep small { color: var(--dim); }
 .rep.out { background: #111a24; border-color: var(--line); }
 .rep button { background: #1f6f3f; border: 1px solid #2fd27a; color: #fff; border-radius: 5px; padding: 6px 10px; font-size: 12px; font-weight: 600; }
+.rep.call { background: #0f1d2a; border-color: #2f6fa8; align-items: flex-start; }
+.rep.call.done { opacity: .65; }
+.callBtns { display: flex; flex-direction: column; gap: 4px; flex: 0 0 auto !important; }
+.callBtns button + button { background: #2a2f38; border-color: #556; }
 
 #start .panel { max-height: 94vh; overflow: auto; }
 .feats { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 14px; }

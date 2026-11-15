@@ -86,3 +86,10 @@ html.light #big table.plan td { border-bottom: 1px solid #dbe2ec; }
 html.light #big .pane button, html.light #big #bCmds button, html.light #big .tact button, html.light #big .act button, html.light #big .rform button { background: #cad7e6; border: 1px solid #a7bdd4; color: #141414; }
 html.light #big button.no { background: #e6cbce; border-color: #7a3038; }
 html.light #big button.no.armed { background: #8a1d27; border-color: #ff0412; }
+html.light .rep.call { background: #dce5ee; border-color: #2f6fa8; }
+html.light .rep.call button:not(.go) { background: #cbd0d8; border-color: #a1a1b1; }
+html.light .ann { border-left: 3px solid #045eff; background: #dfe6f0; }
+html.light .ann.warn { border-color: #b7890a; }
+html.light .ann.chg { border-color: #ff0412; }
+html.light .ann.go { border-color: #24a55f; }
+html.light .ann.info { border-color: #687b91; }

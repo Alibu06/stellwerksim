@@ -25,7 +25,8 @@ export function saveGame(w: World, meta: Omit<SaveMeta, "savedAt">): string {
     dispTrack: [...w.dispTrack],
     queued: w.queued,
     book: w.book, azSections: w.azSections, azId: w.azId, azCount: w.azCount, orders: w.orders, orderNo: w.orderNo, pendingRadio: w.pendingRadio.map(({ then, ...x }) => x),
-    lastOnEdge: [...w.lastOnEdge], zlMode: [...w.zlMode],
+    lastOnEdge: [...w.lastOnEdge], zlMode: [...w.zlMode], orderSw: w.orderSw,
+    ops: w.ops.save(),
     edges: g.edges.map((e) => [e.occ, e.lock, e.overlap, e.slow ?? 0, e.closed ? 1 : 0, e.work ? 1 : 0, e.az ?? 0]),
     sw: g.nodes.filter((n) => n.swSide !== undefined).map((n) => [n.id, n.swPos]),
     sigs: g.signals.map((s) => [s.route, s.auto ? 1 : 0]),
@@ -53,6 +54,7 @@ export function loadGame(w: World, json: string, allTrips: TripSpec[]) {
   const W = w as any;
   const g = w.g;
   const byKey = new Map(allTrips.map((t) => [t.key, t]));
+  if (d.ops) w.ops.load(d.ops, allTrips, byKey);
   const trip = (k: number) => {
     const t = byKey.get(k);
     if (!t) throw new Error(`Fahrt ${k} fehlt`);
@@ -76,6 +78,7 @@ export function loadGame(w: World, json: string, allTrips: TripSpec[]) {
   w.orders = d.orders ?? []; w.orderNo = d.orderNo ?? 1; w.pendingRadio = d.pendingRadio ?? [];
   w.lastOnEdge = new Map(d.lastOnEdge ?? []);
   w.zlMode = new Map(d.zlMode ?? []);
+  w.orderSw = d.orderSw ?? [];
   d.edges.forEach((x: number[], i: number) => {
     const e = g.edges[i];
     [e.occ, e.lock, e.overlap] = x;

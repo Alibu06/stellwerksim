@@ -13,6 +13,8 @@ const w = new World(g, trips, start); const ALL: string[] = []; const _log = w.l
 w.trackPlan = JSON.parse(readFileSync(new URL("../public/data/tracks.json", import.meta.url), "utf8"));
 w.ext.start({ ...DEFAULT_FEATURES, faults: w.faultRate }, start);
 for (const s of g.signals) s.auto = true;
+if (process.env.NOLUE || process.env.NOOPS) { w.ops.lueConflict = () => null; for (const t of trips) if (t.special === "Lü") t.special = undefined; }
+if (process.env.NOOPS) w.ops.step = () => {};
 if (process.env.MAN) { w.zugmeldung = false; w.manualAreas = new Set(["TR","SB","HN","BL","EI","AU","WI","BZ"]); }
 console.log("Knoten", g.nodes.length, "Kanten", g.edges.length, "Signale", g.signals.length, "Fahrten", trips.length);
 const noPath = g.signals.filter((s) => !(w.il.paths.get(s.id)?.length));
@@ -20,6 +22,7 @@ console.log("Signale ohne Fahrstraße:", noPath.map((s) => s.name).join(", "));
 let lastH = -1;
 while (w.time < start + hours * 3600) {
   w.step(0.5);
+  if (process.env.ANS) for (const c of w.ops.calls) if (!c.answered && w.time - c.t > 60) { const r = w.ops.answer(c.id, c.opts[0].k); console.log("ANS", c.kind, c.text.slice(0, 80), "->", r ?? "ok"); }
   const h = Math.floor(w.time / 3600);
   if (h !== lastH) {
     lastH = h;
@@ -28,4 +31,5 @@ while (w.time < start + hours * 3600) {
   }
 }
 for (const e of w.events.filter((e) => e.kind !== "info").slice(-25)) console.log(Math.floor(e.t / 3600) + ":" + String(Math.floor(e.t / 60) % 60).padStart(2, "0"), e.text);
+if (process.env.OPS) for (const t of ALL) if (/☎|Netzleitstelle|Lü|Ersatzverkehr|umgeleitet|Personal|Bauz|Mess |Lz |DbZ|Begegnung|wendet|Teilausfall|Prognose|Überholung/.test(t)) console.log("OPS", t);
 if (process.env.ALL) for (const t of ALL) if (/Wetter|Baustelle|Ereignis|Feuer|Personen|Baum|Pkw|Notarzt|Polizei|gestört|Anschluss|Disposition|Gleisänderung/.test(t)) console.log(t);

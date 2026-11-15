@@ -19,6 +19,7 @@ out = []
 # einfache Regeln (keine verschachtelten @-Blöcke außer @keyframes, die übersprungen werden)
 src = re.sub(r'@keyframes[^{]*\{(?:[^{}]*\{[^}]*\})*[^}]*\}', '', src)
 for sel, body in re.findall(r'([^{}]+)\{([^}]*)\}', src):
+    if '.zza' in sel: continue  # Zugzielanzeiger bleiben in beiden Designs blau wie am echten Bahnsteig
     decls = []
     for d in body.split(';'):
         if ':' not in d: continue

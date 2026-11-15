@@ -436,6 +436,7 @@ async function boot() {
 
   // ---------- Seitenleiste ----------
   const isMine = (sid: number) => sid && !w.il.sig(sid).auto;
+  let lastCallSeen = 0;
   const renderLists = () => {
     const trains = [...w.trains].sort((a, b) => Number(isMine(b.nextSig)) - Number(isMine(a.nextSig)) || b.waitRed - a.waitRed);
     setHtml($("tab-trains"), trains.map((t) => {
@@ -450,8 +451,14 @@ async function boot() {
     }).join(""));
     const open = w.reports.filter((r) => r.kind === "in" && r.state === "offered");
     const outs = w.reports.filter((r) => r.kind === "out" && r.state !== "accepted" && w.trains.some((t) => t.trip === r.trip));
-    $("repCount").textContent = open.length ? String(open.length) : "";
-    const repHtml = (open.length || outs.length ? `<h3>Zugmeldungen</h3>` : "") +
+    const calls = w.ops.calls.filter((c) => !c.answered);
+    const recent = w.ops.calls.filter((c) => c.answered && c.answered !== "timeout" && w.time - c.t < 300);
+    for (const c of calls) if (c.id > lastCallSeen) { lastCallSeen = c.id; toast(`☎ ${c.from} ruft an (Reiter „Zugmeldungen“)`); }
+    $("repCount").textContent = open.length + calls.length ? String(open.length + calls.length) : "";
+    const callHtml = (calls.length ? `<h3>Telefon</h3>` : "") + calls.map((c) => `<div class="rep call"><div><b>☎ ${c.from}</b> <small>${hm(c.t)} · noch ${Math.max(0, Math.ceil((c.expires - w.time) / 60))} min</small><br>${c.text}</div>
+      <div class="callBtns">${c.opts.map((o) => `<button data-call="${c.id}" data-k="${o.k}">${o.label}</button>`).join("")}</div></div>`).join("") +
+      recent.map((c) => `<div class="rep call done"><div><b>☎ ${c.from}</b> <small>${hm(c.t)}</small><br><small>${c.text}</small><br><small>Antwort: ${c.opts.find((o) => o.k === c.answered)?.label ?? c.answered}</small></div></div>`).join("");
+    const repHtml = callHtml + (open.length || outs.length ? `<h3>Zugmeldungen</h3>` : "") +
       open.map((r) => {
         const at = r.trip.entryTime + r.trip.initialDelay;
         return `<div class="rep"><div><b>${r.no}</b> von Fdl ${g.portals[r.portal].label}<br><small>${r.trip.from} → ${r.trip.to} · Einfahrt ca. ${hm(at)}${r.trip.initialDelay >= 180 ? ` (+${Math.round(r.trip.initialDelay / 60)})` : ""}</small></div><button data-acc="${r.id}">Annehmen</button></div>`;
@@ -468,6 +475,13 @@ async function boot() {
   };
   // Klicks in den Listen über Delegation: funktionieren auch, wenn die Liste gerade neu gezeichnet wurde
   $("tab-next").addEventListener("click", (e) => {
+    const cb = (e.target as HTMLElement).closest<HTMLElement>("[data-call]");
+    if (cb) {
+      const why = w.ops.answer(Number(cb.dataset.call), cb.dataset.k!);
+      if (why) toast(why);
+      renderLists();
+      return;
+    }
     const b = (e.target as HTMLElement).closest<HTMLElement>("[data-acc]");
     if (!b) return;
     const why = w.acceptReport(Number(b.dataset.acc));
@@ -664,6 +678,7 @@ async function boot() {
         radio(w, t, String(d.text), d.cmd || undefined);
         return null;
       }
+      case "call": return w.ops.answer(Number(d.id), String(d.k));
       case "zl": return w.setZl(Number(d.key), String(d.mode));
       case "order": return w.issueOrder(Number(d.id), String(d.kind), Number(d.v ?? 40), String(d.reason ?? ""));
       case "watch": bigId = d.id === null || d.id === undefined ? null : Number(d.id); return null;

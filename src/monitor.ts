@@ -172,6 +172,7 @@ document.addEventListener("click", (e) => {
   const t = selTrain();
   switch (a) {
     case "accept": cmd("accept", { id }, "Zugmeldung angenommen"); break;
+    case "call": cmd("call", { id, k: b.dataset.ck }, "Gespräch beendet"); break;
     case "refuse": cmd("refuse", { id, why: ui[`rf${id}`] ?? REFUSE[0] }, "Zugmeldung abgelehnt, Nachbar bietet in 3 min erneut an"); break;
     case "hold": cmd("hold", { id }, "Anschluss wird gehalten"); break;
     case "drop": cmd("drop", { id }, "Anschluss aufgegeben"); break;
@@ -214,7 +215,7 @@ function render() {
     const live = key !== undefined ? snap.trains.find((t) => t.live && t.key === key) : undefined;
     selId = live ? live.id : null;
   }
-  const nOpen = snap.reports.filter((r) => r.kind === "in" && r.state === "offered").length + snap.conns.length;
+  const nOpen = snap.reports.filter((r) => r.kind === "in" && r.state === "offered").length + snap.conns.length + snap.calls.filter((c) => !c.answered).length;
   $("nDispo").textContent = nOpen ? String(nOpen) : "";
   $("nLage").textContent = snap.situation.length ? String(snap.situation.filter((x) => !x.planned).length || "") : "";
   renderBoard();
@@ -222,6 +223,9 @@ function render() {
   if (tab === "lage") renderLage();
   if (tab === "dispo") renderDispo();
   if (tab === "funk") renderFunk();
+  collectAnnouncements();
+  if (tab === "ansage") renderAnsagen();
+  if (tab === "gleis") renderGleis();
   if (tab === "book") setHtml($("p-book"), snap.book.length ? `<p class="empty">Nachweis aller Ersatzhandlungen dieser Schicht (Befehle, Ersatzsignale, Grundstellungen, Zugschlussmeldungen, La und Sperrungen).</p>` + snap.book.slice().reverse().map((b) => `<div class="ev"><time>${hm(b.t)}</time><b>${esc(b.kind)}</b> ${esc(b.text)}</div>`).join("") : `<p class="empty">Noch keine Einträge. Hier landen Befehle, Ersatzsignale, Grundstellungen, Zugschlussmeldungen, La und Sperrungen.</p>`);
   if (tab === "log") setHtml($("p-log"), snap.events.slice().reverse().map((e) => `<div class="ev ${e.kind}"><time>${hm(e.t)}</time>${esc(e.text)}</div>`).join(""));
   drawGraph();
@@ -293,6 +297,15 @@ function stopRow(t: SnapTrain, p: SnapStop) {
     <td class="t ${cls(d)}">${arrived ? hm(p.actArr!) : d >= 60 ? hm(p.eta) : "–"}</td><td class="t">${p.dep !== p.arr ? hm(p.dep) : ""}${prog - p.dep >= 60 ? `<small class="warn">${hm(prog)}</small>` : ""}</td><td>${trk}</td></tr>`;
 }
 
+function specialFlags(t: SnapTrain): string {
+  let h = "";
+  if (t.special === "Lü") h += `<div class="flag warn">Lü-Sendung (Lademaßüberschreitung): auf der freien Strecke kein Gegenzug auf dem Nachbargleis</div>`;
+  else if (t.special) h += `<div class="flag info">Sonderzug: ${esc(t.special)}</div>`;
+  if (t.sev) h += `<div class="flag warn">${esc(t.sev)}</div>`;
+  if (t.crew) h += `<div class="flag info">Personalwechsel in ${esc(stName(t.crew))}</div>`;
+  return h;
+}
+
 function dispoActs(t: SnapTrain): string {
   let html = "";
     if (t.live && t.turnOpts?.length) {
@@ -316,6 +329,9 @@ function renderDispo() {
   const s = snap!;
   let html = "";
   const open = s.reports.filter((r) => r.kind === "in" && r.state === "offered");
+  const calls = s.calls.filter((c) => !c.answered);
+  if (calls.length) html += `<h3>Telefon</h3>` + calls.map((c) => `<div class="rep call"><div><b>☎ ${esc(c.from)}</b> <small>${hm(c.t)} · noch ${Math.max(0, Math.ceil((c.expires - s.time) / 60))} min</small><br>${esc(c.text)}</div>
+      <div class="ra">${c.opts.map((o, i) => `<button class="${i ? "" : "go"}" data-a="call" data-id="${c.id}" data-ck="${o.k}">${esc(o.label)}</button>`).join("")}</div></div>`).join("");
   html += `<h3>Zugmeldungen</h3>`;
   html += open.length ? open.map((r) => `<div class="rep"><div><b>${esc(r.no)}</b> von Fdl ${esc(r.where)}<br><small>${esc(r.from)} → ${esc(r.to)} · ca. ${hm(r.at)}</small></div>
       <div class="ra"><button class="go" data-a="accept" data-id="${r.id}">Annehmen</button>
@@ -339,13 +355,99 @@ function renderDispo() {
     html += `<div class="tcard"><div class="th"><span class="cat" style="background:${CAT[t.cat]}">${esc(t.line)}</span><b>${esc(t.no)}</b> <span>${esc(t.from)} → ${esc(t.to)}</span>
       <span class="${cls(t.delay)} dl">${d >= 1 ? `+${d} min` : "pünktlich"}</span></div>
       <small>${t.live ? esc(t.where ?? "") : esc(t.status)}${t.live && t.status ? ` · ${esc(t.status)}` : ""}</small>
-      ${t.fault ? `<div class="flag bad">${esc(t.fault)}</div>` : ""}${t.hold ? `<div class="flag warn">Halt auf deine Anordnung</div>` : ""}${t.waitFor ? `<div class="flag info">Wartet auf Überholung durch ${esc(t.waitFor)}</div>` : ""}
+      ${t.fault ? `<div class="flag bad">${esc(t.fault)}</div>` : ""}${specialFlags(t)}${t.hold ? `<div class="flag warn">Halt auf deine Anordnung</div>` : ""}${t.waitFor ? `<div class="flag info">Wartet auf Überholung durch ${esc(t.waitFor)}</div>` : ""}
       ${t.live ? `<div class="ra"><button data-a="big">Großansicht</button><button data-a="focus">Im Stellwerk zeigen</button><button data-a="funk">Funk</button></div>` : ""}
       <table class="stops"><tr><th>Halt</th><th>an</th><th>Prog.</th><th>ab</th><th>Gleis</th></tr>${t.stops.filter((p) => !p.done || p.actDep === undefined).map((p) => stopRow(t, p)).join("")}</table>`;
     html += dispoActs(t);
     html += `</div>`;
   }
   setHtml($("p-dispo"), html);
+}
+
+// ---------- Ansagen und Zugzielanzeiger am Bahnsteig ----------
+const ann = new Map<string, { st: string; t: number; text: string; kind: string }>();
+const viaOf = (t: SnapTrain, i: number) => t.stops.slice(i + 1).filter((x) => !x.betr).slice(0, 3).map((x) => stName(x.st));
+const catName = (t: SnapTrain) => (t.cat === "G" ? "Güterzug" : t.line);
+function collectAnnouncements() {
+  const s = snap!, now = s.time;
+  const code = sel.value;
+  if (!code) return;
+  const st = s.stations.find((x) => x.code === code);
+  const add = (key: string, kind: string, text: string) => { if (!ann.has(key)) ann.set(key, { st: code, t: now, text, kind }); };
+  for (const t of s.trains) {
+    const i = t.stops.findIndex((x) => x.st === code);
+    const p = t.stops[i];
+    if (p && !p.betr && !p.done && p.actDep === undefined) {
+      const last = i === t.stops.length - 1 && !t.exits && i > 0;
+      const trk = p.track ?? p.disp ?? p.plan;
+      const dep = Math.max(p.dep, p.eta + (p.dep - p.arr));
+      const delay = Math.round((p.eta - p.arr) / 60);
+      const until = p.eta - now;
+      const via = viaOf(t, i);
+      const name = `${catName(t)} ${last ? `aus ${t.from}` : `nach ${t.to}`}`;
+      if (delay >= 5 && until < 2400 && p.actArr === undefined) {
+        const b = Math.round(delay / 5) * 5;
+        add(`del|${t.key}|${code}|${b}`, "warn", `Information zu ${name}, planmäßige ${last ? "Ankunft" : "Abfahrt"} ${hm(last ? p.arr : p.dep)}${trk ? ` von Gleis ${trk}` : ""}: Dieser Zug hat heute ca. ${b} Minuten Verspätung.${t.reason ? ` Grund dafür ist ${t.reason}.` : ""} Wir bitten um Entschuldigung.`);
+      }
+      if (p.plan && trk && trk !== p.plan && until < 1800)
+        add(`chg|${t.key}|${code}|${trk}`, "chg", `Achtung, Gleisänderung! ${name}, ${last ? "Ankunft" : "Abfahrt"} ${hm(last ? p.arr : p.dep)}, ${last ? "kommt" : "fährt"} heute ${last ? "an" : "von"} Gleis ${trk}, nicht von Gleis ${p.plan}. Ich wiederhole: Gleis ${trk}.`);
+      if (t.sev && until < 2400) add(`sev|${t.key}|${code}`, "warn", `Information zu ${name}: Wegen einer Streckensperrung fährt dieser Zug heute nur bis ${t.sev.replace(/^Ersatzverkehr mit Bussen ab /, "")}. Von dort fahren Ersatzbusse. Bitte beachten Sie die Aushänge.`);
+      if (t.live && until < 100 && p.actArr === undefined)
+        add(`ein|${t.key}|${code}`, "go", last ? `${trk ? `Gleis ${trk}: ` : ""}Einfahrt ${catName(t)} aus ${t.from}. Dieser Zug endet hier. Bitte nicht einsteigen.`
+          : `${trk ? `Gleis ${trk}: ` : ""}Einfahrt ${name}${via.length ? ` über ${via.join(", ")}` : ""}. Abfahrt ${hm(dep)}. Bitte Vorsicht bei der Einfahrt.`);
+    } else if (!p && st && t.live && t.v > 5) {
+      // Durchfahrt: Zug kommt auf den Bahnhof zu und hält dort nicht
+      const d = (st.s - t.s) * t.dir;
+      const beyond = t.cat === "G" || t.stops.some((x) => !x.done && (stS(x.st) - st.s) * t.dir > 200);
+      if (d > 0 && d < 2500 && beyond) add(`dfa|${t.id}|${code}`, "info", `Vorsicht an der Bahnsteigkante, ein Zug fährt durch. Bitte zurücktreten.`);
+    }
+  }
+  if (ann.size > 600) { const old = [...ann.entries()].sort((a, b) => a[1].t - b[1].t).slice(0, 200); for (const [k] of old) ann.delete(k); }
+}
+const stS = (code: string) => snap!.stations.find((x) => x.code === code)?.s ?? NaN;
+function renderAnsagen() {
+  const code = sel.value;
+  const list = [...ann.values()].filter((a) => a.st === code).sort((a, b) => b.t - a.t).slice(0, 40);
+  setHtml($("p-ansage"), `<p class="empty">Ansagen am Bahnsteig in ${esc(stName(code))} (Bahnhof oben links bei der Tafel wählen). Neue Ansagen stehen oben.</p>` +
+    (list.length ? list.map((a) => `<div class="ann ${a.kind}"><time>${hm(a.t)}</time><span>${esc(a.text)}</span></div>`).join("") : `<p class="empty">Bisher keine Ansagen.</p>`));
+}
+function renderGleis() {
+  const s = snap!, now = s.time, code = sel.value;
+  const tracks = s.tracks[code] ?? [];
+  const per = new Map<string, { t: SnapTrain; p: SnapStop; i: number; dep: number }[]>();
+  for (const t of s.trains) {
+    const i = t.stops.findIndex((x) => x.st === code);
+    const p = t.stops[i];
+    if (!p || p.betr || p.actDep !== undefined) continue;
+    const trk = p.track ?? p.disp ?? p.plan;
+    if (!trk) continue;
+    const dep = Math.max(p.dep, p.eta + (p.dep - p.arr));
+    if (dep < now - 60) continue;
+    const a = per.get(trk) ?? [];
+    a.push({ t, p, i, dep });
+    per.set(trk, a);
+  }
+  const html = tracks.map((trk) => {
+    const a = (per.get(trk) ?? []).sort((x, y) => x.dep - y.dep);
+    const f = a[0], n = a[1];
+    if (!f) return `<div class="zza"><div class="zg">${esc(trk)}</div><div class="zm empty">Kein Zugverkehr</div></div>`;
+    const t = f.t, p = f.p;
+    const last = f.i === t.stops.length - 1 && !t.exits;
+    const d = Math.round((p.eta - p.arr) / 60);
+    const notes: string[] = [];
+    if (p.plan && p.plan !== trk) notes.push(`Heute hier statt Gleis ${p.plan}`);
+    if (d >= 3) notes.push(`ca. ${d} Minuten später`);
+    if (t.sev) notes.push(`Fährt nur bis ${t.sev.replace(/^Ersatzverkehr mit Bussen ab /, "")}, weiter mit Bussen`);
+    if (p.actArr !== undefined) notes.push("Zug steht am Bahnsteig");
+    else if (t.live && p.eta - now < 90) notes.push("Zug fährt ein");
+    return `<div class="zza" data-sel="${t.id}"><div class="zg">${esc(trk)}</div><div class="zm">
+      <div class="zt"><b>${hm(last ? p.arr : p.dep)}</b><span class="cat" style="background:${CAT[t.cat]}">${esc(t.line)}</span><small>${esc(short(t.no))}</small></div>
+      <div class="zd">${last ? "Nicht einsteigen" : esc(t.to)}</div>
+      <div class="zv">${last ? `aus ${esc(t.from)}, endet hier` : esc(viaOf(t, f.i).join(" – "))}</div>
+      ${notes.length ? `<div class="zn">${notes.map(esc).join(" · ")}</div>` : ""}
+      ${n ? `<div class="zx">Danach: ${hm(n.p.dep)} ${esc(n.t.line)} ${n.i === n.t.stops.length - 1 && !n.t.exits ? "endet hier" : esc(n.t.to)}</div>` : ""}</div></div>`;
+  }).join("");
+  setHtml($("p-gleis"), `<p class="empty">Zugzielanzeiger je Bahnsteiggleis in ${esc(stName(code))}.</p>` + (html || `<p class="empty">Keine Bahnsteiggleise.</p>`));
 }
 
 // Funk: Kopf und Verlauf werden neu aufgebaut, das Eingabefeld bleibt bestehen

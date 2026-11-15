@@ -9,7 +9,7 @@ export interface SnapTrain {
   id: number; no: string; cat: string; line: string; from: string; to: string; dir: number;
   s: number; v: number; delay: number; live: boolean; stops: SnapStop[]; status: string; reason?: string; entry?: number;
   key: number; where?: string; hold?: boolean; fault?: string; waitFor?: string; radio?: { t: number; from: string; text: string }[];
-  turnOpts?: string[]; umlauf?: string; ovSt?: string[]; ovBy?: { id: number; no: string }[]; turnInto?: string;
+  turnOpts?: string[]; umlauf?: string; special?: string; sev?: string; crew?: string; exits?: boolean; ovSt?: string[]; ovBy?: { id: number; no: string }[]; turnInto?: string;
 }
 export interface Snapshot {
   time: number;
@@ -23,6 +23,7 @@ export interface Snapshot {
   conns: { id: number; feeder: string; conn: string; st: string; dep: number; wait: number; text: string }[];
   tracks: Record<string, string[]>;
   book: { t: number; kind: string; text: string }[];
+  calls: { id: number; t: number; from: string; text: string; opts: { k: string; label: string }[]; answered?: string; expires: number }[];
 }
 
 export const CHANNEL = "stellwerk-sieg";
@@ -34,7 +35,7 @@ export function makeSnapshot(w: World, g: Graph): Snapshot {
     const wf = t.waitFor && w.trains.find((o) => o.id === t.waitFor!.train);
     return {
       key: t.trip.key, where: w.position(t).text, hold: t.hold, fault: t.fault && t.faultUntil > w.time ? t.fault : undefined,
-      waitFor: wf ? `${wf.no} in ${g.stations[t.waitFor!.st].name}` : undefined, radio: t.radio.slice(-14), turnInto: t.trip.turnInto?.no, umlauf: w.umlaufNo(t.trip),
+      waitFor: wf ? `${wf.no} in ${g.stations[t.waitFor!.st].name}` : undefined, radio: t.radio.slice(-14), turnInto: t.trip.turnInto?.no, umlauf: w.umlaufNo(t.trip), special: t.trip.special, exits: !!t.trip.exitPortal, sev: t.sev, crew: w.ops.crewChange.get(t.trip.key),
       turnOpts: w.shortTurnOptions(t), ovSt: w.overtakeStations(t), ovBy: w.overtakers(t).map((o) => ({ id: o.id, no: o.no })),
       id: t.id, no: t.no, cat: t.cat, line: t.trip.line, from: t.trip.from, to: t.trip.to, dir: t.dir,
       s: w.headS(t), v: t.v, delay: w.liveDelay(t), live: true, status: st[0]?.text ?? "", reason: t.reason,
@@ -45,7 +46,7 @@ export function makeSnapshot(w: World, g: Graph): Snapshot {
   // Züge, die bald in den Bereich kommen (für die Abfahrtstafel)
   for (const trip of w.upcoming(60)) {
     trains.push({
-      key: trip.key, id: -trip.key, no: trip.no, cat: trip.cat, line: trip.line, from: trip.from, to: trip.to, dir: trip.dir, s: NaN, v: 0,
+      key: trip.key, special: trip.special, exits: !!trip.exitPortal, id: -trip.key, no: trip.no, cat: trip.cat, line: trip.line, from: trip.from, to: trip.to, dir: trip.dir, s: NaN, v: 0,
       delay: trip.initialDelay, live: false, status: trip.entryPortal ? `erwartet von ${g.portals[trip.entryPortal].label}` : "wird bereitgestellt",
       entry: trip.entryTime + trip.initialDelay,
       stops: trip.stops.map((s) => ({ st: s.st, arr: s.arr, dep: s.dep, eta: s.arr + trip.initialDelay, done: false, plan: w.planTrack(s.st, trip.dir, trip.line, trip.to), disp: w.dispTrack.get(`${trip.key}|${s.st}`) })),
@@ -68,6 +69,7 @@ export function makeSnapshot(w: World, g: Graph): Snapshot {
         text: `Zubringer kommt ca. ${c.wait} min zu spät zum Umstieg` };
     }),
     book: w.book.slice(-60),
+    calls: w.ops.calls.filter((c) => !c.answered || w.time - c.t < 900).map(({ data, kind, ...c }) => c),
     tracks: Object.fromEntries(Object.keys(g.stations).map((c) => [c, w.platformTracks(c).map((x) => x.track)])),
   };
 }

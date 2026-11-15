@@ -64,7 +64,7 @@ export interface Site {
 }
 export interface Happening {
   id: number; kind: "feuer" | "personen" | "notarzt" | "polizei" | "baum" | "pkw"; text: string; edges: number[]; until: number;
-  prev: Map<number, { slow?: number; closed?: boolean }>; station?: string;
+  prev: Map<number, { slow?: number; closed?: boolean }>; station?: string; sec?: [string, string];
 }
 
 // Abschnitte zwischen benachbarten Bahnhöfen (für Ereignisse)
@@ -329,7 +329,7 @@ export class Extras {
     const w = this.w, g = w.g, r = this.rand;
     const sec = SECTIONS[Math.floor(r() * SECTIONS.length)];
     const nm = (c: string) => g.stations[c].name;
-    const h: Happening = { id: this.id++, kind, text: "", edges: [], until: 0, prev: new Map() };
+    const h: Happening = { id: this.id++, kind, text: "", edges: [], until: 0, prev: new Map(), sec: [sec[0], sec[1]] };
     switch (kind) {
       case "feuer": {
         const dur = 1200 + r() * 1800;

@@ -1,4 +1,5 @@
 import { Extras } from "./extras";
+import { Ops } from "./ops";
 import { Dir, GEdge, Graph, nextEdge, otherEnd, trailingOk, vEdge } from "./graph";
 import { Interlocking, PathDef } from "./interlocking";
 import { Cat, TripSpec, TTStop, rng } from "./timetable";
@@ -47,6 +48,7 @@ export interface Train {
   faultUntil: number;
   sight: boolean; // Fahrt auf Sicht nach Ersatzsignal
   zsCap?: number; zsLeft?: number; // Zs 3 hinter dem zuletzt passierten Signal
+  sev?: string; // Ersatzverkehr (Text für die Fahrgastinfo)
   orderV?: number; // Höchstgeschwindigkeit laut Befehl (km/h), gilt bis zum nächsten Hauptsignal
   raeum?: number; // Räumungsprüfung für diesen Achszählabschnitt
   hold: boolean; // Halt auf Anordnung des Fahrdienstleiters (Funk)
@@ -141,6 +143,7 @@ export class World {
   zugmeldung = true; // Funktion an/aus
   manualAreas = new Set<string>(); // Bahnhöfe, die der Spieler stellt
   ext: Extras;
+  ops: Ops;
   connAlerts: { id: number; feeder: number; conn: number; st: string; t: number; wait: number }[] = [];
 
   constructor(public g: Graph, trips: TripSpec[], startTime: number) {
@@ -148,9 +151,11 @@ export class World {
     this.time = startTime;
     this.findSingleTracks();
     this.ext = new Extras(this);
+    this.ops = new Ops(this);
     // Züge, deren Fahrt bei Spielbeginn schon vorbei ist, entfallen; Wendezüge werden vom Vorgänger übernommen
     this.pending = trips.filter((t) => !t.turnedFrom && t.entryTime + t.initialDelay >= startTime - 60);
     this.buildUmlauf(trips);
+    this.ops.start(trips);
   }
 
   // ---------------- Umläufe außerhalb des Bereichs ----------------
@@ -219,6 +224,7 @@ export class World {
     this.time += dt;
     if (this.zugmeldung) this.reportsTick();
     this.ext.step(dt);
+    this.ops.step(dt);
     this.spawn();
     for (const t of this.trains) this.drive(t, dt);
     this.trains = this.trains.filter((t) => !t.gone);
@@ -228,6 +234,7 @@ export class World {
       this.faultsTick();
     }
     if (this.orders.length || this.pendingRadio.length) this.ordersTick();
+    if (this.orderSw.length) this.releaseOrderSw();
     this.zlTimer += dt;
     if (this.zlTimer >= 2) {
       this.zlTimer = 0;
@@ -557,6 +564,7 @@ export class World {
           } else this.incident(`${t.no} hat ${sg.name} in Haltstellung überfahren!`);
         } else {
           t.sight = false; t.orderV = undefined;
+          this.releaseOrderSw(t.id);
           const a = sg.kind === "main" ? this.il.aspect(sg, this.time) : undefined;
           if (a?.zs3) { t.zsCap = a.zs3 * 10; t.zsLeft = 300 + t.len; } else if (sg.kind === "main") t.zsLeft = 0;
         }
@@ -909,6 +917,7 @@ export class World {
     t.trip = next;
     t.no = next.no;
     t.stops = next.stops.map((s) => ({ ...s, done: false, plan: this.planTrack(s.st, next.dir, next.line, next.to) }));
+    t.sev = undefined;
     t.stops[0].track = this.headEdge(t).platform?.track;
     t.stopIdx = 0;
     const s0 = t.stops[0];
@@ -973,7 +982,10 @@ export class World {
     }
     cands.sort((a, b) => Number(a.diverging) - Number(b.diverging) || a.len - b.len);
     let why: string | null = null;
+    const who = this.trains.find((x) => x.nextSig === startSig);
     for (const p of cands) {
+      const lue = this.ops.lueConflict(p, who);
+      if (lue) { why ??= lue; continue; }
       const r = this.il.set(p, this.time);
       if (typeof r !== "string") return null;
       why ??= r;
@@ -1008,6 +1020,8 @@ export class World {
       if (s.kind === "block") {
         for (const p of paths) {
           if (p.endPortal && this.zugmeldung && !this.outAccepted(t)) continue;
+          if (this.ops.lueConflict(p, t)) continue;
+          if (this.crossingBlocked(t, p) && t.waitRed < 900) continue; // auch Blocksignale vor eingleisigen Abschnitten beachten die Kreuzung
           if (!this.il.check(p)) { this.il.set(p, this.time); break; }
         }
         continue;
@@ -1033,6 +1047,9 @@ export class World {
       // (wartet der Zug schon länger, sind auch Umwege und andere Gleise recht)
       if (c > ideal * 1.25 + 800 + (t.waitRed > 120 ? 3000 : 0)) continue;
       if (this.singleTrackBlocked(t, p)) continue;
+      if (this.ops.lueConflict(p, t)) continue;
+      // Zuglänge: lange Züge nicht vor ein Signal schicken, vor dem sie mit dem Ende in den Weichen stehen bleiben würden
+      if (p.endSig && t.cat === "G" && t.len > 120 && this.roomBefore(p.endSig) < t.len + 10 && t.waitRed < 600 && !this.canGoOn(p.endSig)) continue;
       if (p.endPortal && this.zugmeldung && !this.outAccepted(t)) continue;
       if (this.il.check(p)) continue;
       if (c < bestCost) {
@@ -1041,6 +1058,33 @@ export class World {
       }
     }
     return bestCost < 1e8 ? best : null;
+  }
+
+  // Platz vor einem Signal bis zur nächsten Weiche (dort kann ein Zug stehen, ohne Weichen zu blockieren)
+  private roomCache = new Map<number, number>();
+  roomBefore(sid: number): number {
+    const c = this.roomCache.get(sid);
+    if (c !== undefined) return c;
+    const g = this.g, sg = this.il.sig(sid);
+    let n = sg.node, room = 0;
+    for (let k = 0; k < 30; k++) {
+      const N = g.nodes[n];
+      const back = sg.dir > 0 ? N.west : N.east;
+      if (back.length !== 1) break;
+      const E = g.edges[back[0]];
+      room += E.len;
+      n = otherEnd(E, n);
+      const M = g.nodes[n];
+      if (M.swSide !== undefined || (sg.dir > 0 ? M.west : M.east).length !== 1 || (sg.dir > 0 ? M.sigE : M.sigW)) break;
+    }
+    this.roomCache.set(sid, room);
+    return room;
+  }
+  // Kann hinter dem Signal sofort weitergefahren werden (Fahrstraße frei oder schon eingestellt)?
+  private canGoOn(sid: number): boolean {
+    const s = this.il.sig(sid);
+    if (s.route) return true;
+    return (this.il.paths.get(sid) ?? []).some((q) => !this.il.check(q));
   }
 
   // ---------------- Eingleisige Abschnitte (Kreuzungslogik der Zuglenkung) ----------------
@@ -1082,8 +1126,11 @@ export class World {
     // Einfahrt in den eingleisigen Abschnitt nur, wenn im Kreuzungsbahnhof am anderen Ende ein Gleis frei ist
     for (const S of this.singles) {
       if (!p.edges.some((e) => S.edges.has(e))) continue;
-      const far = [...S.gates].filter(([, d]) => d !== t.dir);
+      let far = [...S.gates].filter(([, d]) => d !== t.dir);
       if (far.length < 2) continue;
+      // nur Bahnsteiggleise zählen (ein Gleis einer abzweigenden Strecke nützt dem Gegenzug nichts)
+      const plat = far.filter(([sid]) => { const eb = this.edgeBehind(this.il.sig(sid)); return eb >= 0 && !!this.g.edges[eb].platform; });
+      if (plat.length) far = plat;
       const free = far.filter(([sid]) => {
         const eb = this.edgeBehind(this.il.sig(sid));
         if (eb < 0) return false;
@@ -1413,7 +1460,7 @@ export class World {
         sec.zugschluss = sec.zugschluss ?? "Nachbar-Fdl";
         this.azReset(sec.id);
       } else if (sec.state === 2) {
-        const t = this.trains.find((x) => x.v < 0.5 && x.nextSig && x.distNextSig < 400 && !this.orders.some((o) => o.train === x.id && o.state !== "gültig") && this.orderCheck(x, "vorbei").raeum === sec.id);
+        const t = this.trains.find((x) => x.v < 0.5 && x.nextSig && x.distNextSig < 400 && !x.raeum && !this.il.zs1.has(x.nextSig) && !this.orders.some((o) => o.train === x.id && (o.state !== "gültig" || this.time - o.at < 120)) && this.orderCheck(x, "vorbei").raeum === sec.id);
         if (t) this.issueOrder(t.id, "vorbei");
       }
     }
@@ -1525,6 +1572,26 @@ export class World {
     this.log(`Befehl Nr. ${no} an ${t.no} wird diktiert`, "info");
     return null;
   }
+  // Weichen im Fahrweg eines Befehls gegen Umstellen sichern, bis der Zug das nächste Fahrt zeigende Signal erreicht
+  orderSw: { node: number; train: number; until: number }[] = [];
+  private lockOrderPath(t: Train, sig: number) {
+    const p = (this.il.paths.get(sig) ?? []).find((p) => p.sw.every(({ node, pos }) => this.g.nodes[node].swPos === pos) && p.edges.every((e) => !this.g.edges[e].closed && (!this.g.edges[e].occ || t.body.includes(e))));
+    if (!p) return;
+    for (const { node } of p.sw) {
+      if (this.il.blockedSwitches.has(node)) continue;
+      this.il.blockedSwitches.add(node);
+      this.orderSw.push({ node, train: t.id, until: this.time + 1200 });
+    }
+  }
+  releaseOrderSw(train?: number) {
+    if (!this.orderSw.length) return;
+    const keep: typeof this.orderSw = [];
+    for (const x of this.orderSw) {
+      if (x.train === train || x.until < this.time || !this.trains.some((t) => t.id === x.train)) this.il.blockedSwitches.delete(x.node);
+      else keep.push(x);
+    }
+    this.orderSw = keep;
+  }
   private ordersTick() {
     for (const p of [...this.pendingRadio]) {
       if (p.at > this.time) continue;
@@ -1549,6 +1616,7 @@ export class World {
           const c = this.orderCheck(t, "vorbei");
           if (c.why && !/schon/.test(c.why)) { this.log(`Befehl Nr. ${o.no} kann nicht mehr ausgeführt werden: ${c.why}`, "warn"); continue; }
           this.il.zs1.set(o.sig, this.time + 300);
+          this.lockOrderPath(t, o.sig);
           t.raeum = o.raeum;
           t.orderV = 40;
         } else {
@@ -1568,11 +1636,15 @@ export class World {
     for (const trip of this.pending) {
       if (!trip.entryPortal) continue;
       const at = trip.entryTime + trip.initialDelay;
-      if (at - 240 > this.time) break;
+      if (at - 480 > this.time) break;
+      if (at - this.ops.lead(trip.entryPortal) > this.time) continue;
       if (this.reports.some((r) => r.trip === trip && r.kind === "in")) continue;
       const auto = !this.manualAreas.has(PORTAL_AREA[trip.entryPortal] ?? "");
-      const r: Report = { id: this.reportId++, no: trip.no, trip, portal: trip.entryPortal, kind: "in", state: auto ? "accepted" : "offered", t: this.time };
+      // manchmal vergisst der Nachbar das Anbieten und meldet den Zug erst, wenn er schon unterwegs ist
+      const forgot = !auto && this.rand() < this.ops.forget(trip.entryPortal);
+      const r: Report = { id: this.reportId++, no: trip.no, trip, portal: trip.entryPortal, kind: "in", state: auto || forgot ? "accepted" : "offered", t: this.time, note: forgot ? "nicht angeboten" : undefined };
       this.reports.push(r);
+      if (forgot) { this.log(`Fdl ${this.g.portals[trip.entryPortal].label}: „Sorry, ${trip.no} ist schon unterwegs, hab vergessen ihn anzubieten.“`, "warn"); continue; }
       if (!auto) this.log(`Zugmeldung: Fdl ${this.g.portals[trip.entryPortal].label} bietet ${trip.no} an. Annehmen?`, "warn");
     }
     // abgelehnte Züge bietet der Nachbar später erneut an
@@ -1595,7 +1667,7 @@ export class World {
         continue;
       }
       if (old.respondAt && this.time >= old.respondAt && old.state !== "accepted") {
-        if (old.state === "offered" && this.rand() < 0.07) {
+        if (old.state === "offered" && this.rand() < this.ops.refuseP(ex)) {
           old.state = "refused";
           const why = ["Strecke noch belegt", "Gleis im Nachbarbahnhof besetzt", "Gegenzug muss erst durch"][Math.floor(this.rand() * 3)];
           old.note = why;
@@ -1684,7 +1756,8 @@ export class World {
   // Bahnhöfe mit mindestens drei Bahnsteiggleisen, in denen ein Zug überholt werden kann
   overtakeStations(t: Train): string[] {
     const hs = this.headS(t);
-    return Object.keys(this.g.stations).filter((st) => this.platformTracks(st).length >= 3 && (this.stS(st) - hs) * t.dir > 300 && (this.stS(st) - hs) * t.dir < 30000);
+    // Überholgleis muss lang genug für den Zug sein (lange Güterzüge passen nicht überall)
+    return Object.keys(this.g.stations).filter((st) => this.platformTracks(st).length >= 3 && this.platformTracks(st).filter((x) => x.len >= t.len + 20).length >= 2 && (this.stS(st) - hs) * t.dir > 300 && (this.stS(st) - hs) * t.dir < 30000);
   }
   // Züge, die t überholen könnten: gleiche Richtung, dahinter
   overtakers(t: Train): Train[] {
