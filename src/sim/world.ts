@@ -40,6 +40,7 @@ export interface Train {
   stopAheadIsPlatform: boolean;
   waitRed: number; // Sekunden vor Halt zeigendem Signal
   standStill: number;
+  stillT?: number; // Sekunden Stillstand außerhalb des Bahnsteighalts
   reverseAt: number; // geplante Wende
   dissolveAt: number; // Abstellung
   fault?: string; // aktuelle Störung am Zug
@@ -411,6 +412,10 @@ export class World {
   private drive(t: Train, dt: number) {
     if (t.gone) return;
     if (t.shunt) return this.shuntDrive(t, dt);
+    // Steht der Zug 30 s, braucht er keinen Durchrutschweg mehr: auflösen, damit die Weichen dahinter frei werden
+    // (langsames Vorziehen an das Signal nach dem Halt zählt nicht als Weiterfahrt)
+    t.stillT = t.v < 3 ? (t.stillT ?? 0) + dt : 0;
+    if (t.stillT > 25 && t.v < 0.05) this.il.releaseOverlapForTrain(t.id);
     if (t.dwelling) {
       this.dwell(t);
       if (t.gone) return;
