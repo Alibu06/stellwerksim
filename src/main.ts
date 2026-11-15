@@ -438,6 +438,24 @@ async function boot() {
   // ---------- Seitenleiste ----------
   const isMine = (sid: number) => sid && !w.il.sig(sid).auto;
   let lastCallSeen = 0;
+  // Funkmeldungen „abfahrbereit“ als Hinweis unten im Gleisbild (Klick öffnet den Zug)
+  let lastNoticeSeen = 0;
+  const notifyEl = $("notify");
+  const pushNotice = (n: { id: number; text: string; train: number }) => {
+    const d = document.createElement("div");
+    d.className = "nt";
+    d.innerHTML = `<span>📻</span><span>${n.text.replace(/^(\S+ \S+)/, "<b>$1</b>")}</span><span class="x">✕</span>`;
+    d.onclick = (ev) => {
+      d.remove();
+      if ((ev.target as HTMLElement).classList.contains("x")) return;
+      const t = w.trains.find((x) => x.id === n.train);
+      if (t) { const ed = g.edges[t.body[t.body.length - 1]]; view.centerOn(g.nodes[ed.a].x, g.nodes[ed.a].y); showTrain(t); }
+    };
+    notifyEl.appendChild(d);
+    while (notifyEl.children.length > 4) notifyEl.firstElementChild!.remove();
+    setTimeout(() => d.classList.add("old"), 25000);
+    setTimeout(() => d.remove(), 60000);
+  };
   const renderLists = () => {
     const trains = [...w.trains].sort((a, b) => Number(isMine(b.nextSig)) - Number(isMine(a.nextSig)) || b.waitRed - a.waitRed);
     setHtml($("tab-trains"), trains.map((t) => {
@@ -454,6 +472,7 @@ async function boot() {
     const outs = w.reports.filter((r) => r.kind === "out" && r.state !== "accepted" && w.trains.some((t) => t.trip === r.trip));
     const calls = w.ops.calls.filter((c) => !c.answered);
     const recent = w.ops.calls.filter((c) => c.answered && c.answered !== "timeout" && w.time - c.t < 300);
+    for (const n of w.notices) if (n.id > lastNoticeSeen) { lastNoticeSeen = n.id; pushNotice(n); }
     for (const c of calls) if (c.id > lastCallSeen) { lastCallSeen = c.id; toast(`☎ ${c.from} ruft an (Reiter „Zugmeldungen“)`); }
     const matters = w.phone.open();
     $("repCount").textContent = open.length + calls.length + matters.length ? String(open.length + calls.length + matters.length) : "";

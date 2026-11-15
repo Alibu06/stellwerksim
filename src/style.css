@@ -68,6 +68,12 @@ main { position: absolute; top: 52px; bottom: 0; left: 0; right: 0; }
 
 #toast { position: absolute; left: 50%; top: 14px; transform: translateX(-50%); background: #2a1418; border: 1px solid #6b2a33; color: #ffd6d9; padding: 8px 14px; border-radius: 8px; font-size: 13px; opacity: 0; transition: opacity 0.2s; pointer-events: none; margin-left: -170px; }
 #toast.show { opacity: 1; }
+#notify { position: absolute; left: 50%; bottom: 16px; transform: translateX(-50%); margin-left: -170px; display: flex; flex-direction: column-reverse; gap: 6px; width: min(560px, 60vw); pointer-events: none; z-index: 5; }
+#notify .nt { pointer-events: auto; display: flex; gap: 10px; align-items: flex-start; background: #10233af2; border: 1px solid #36c5f0; border-left: 4px solid #36c5f0; color: var(--text); padding: 9px 12px; border-radius: 8px; font-size: 13px; box-shadow: 0 8px 24px #0009; cursor: pointer; animation: ntIn 0.25s ease-out; }
+#notify .nt b { font-family: "JetBrains Mono", ui-monospace, monospace; }
+#notify .nt .x { margin-left: auto; color: #8fb4cf; padding: 0 2px; }
+#notify .nt.old { opacity: 0.55; }
+@keyframes ntIn { from { transform: translateY(12px); opacity: 0; } to { transform: none; opacity: 1; } }
 
 #card { position: absolute; left: 14px; top: 14px; width: 300px; background: #111821f2; border: 1px solid #2b3747; border-radius: 10px; padding: 12px 14px; font-size: 12px; box-shadow: 0 10px 30px #0008; }
 #card.hidden { display: none; }

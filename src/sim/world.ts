@@ -256,7 +256,7 @@ export class World {
     if (this.orders.length || this.pendingRadio.length) this.ordersTick();
     if (this.orderSw.length) this.releaseOrderSw();
     this.depotTimer += dt;
-    if (this.depotTimer >= 10) { this.depotTimer = 0; this.depotTick(); this.couplingTick(); this.rescueTick(); this.routeJanitor(); this.jamResolver(); }
+    if (this.depotTimer >= 10) { this.depotTimer = 0; this.depotTick(); this.couplingTick(); this.rescueTick(); this.routeJanitor(); this.jamResolver(); this.readyCalls(); }
     this.zlTimer += dt;
     if (this.zlTimer >= 2) {
       this.zlTimer = 0;
@@ -1110,6 +1110,28 @@ export class World {
     this.takeOut(cand[0]);
   }
   private jamAsk = new Map<number, number>();
+  // Wendezüge und bereitgestellte Züge im Bereich des Spielers melden sich per Funk abfahrbereit
+  notices: { id: number; t: number; text: string; train: number }[] = [];
+  private noticeId = 1;
+  private readySaid = new Set<number>();
+  private readyCalls() {
+    for (const t of this.trains) {
+      if (!t.dwelling || t.stopIdx !== 0 || t.shunt || t.parked || (t.fault && this.time < t.faultUntil)) continue;
+      if (t.trip.entryPortal && !t.trip.turnedFrom) continue;
+      if (this.readySaid.has(t.trip.key)) continue;
+      const s = t.stops[0], pl = t.body.length ? this.headEdge(t).platform : undefined;
+      if (!s || !pl || pl.st !== s.st || !this.manualSt(s.st)) continue;
+      if (this.time < t.dwellUntil - 90) continue;
+      this.readySaid.add(t.trip.key);
+      if (t.nextSig && this.il.proceeds(this.il.sig(t.nextSig), this.time)) continue;
+      const sg = t.nextSig ? this.il.sig(t.nextSig).name : "";
+      const text = `${t.no} in ${this.g.stations[s.st].name} Gleis ${pl.track}: Türen sind zu, Zug ist abfahrbereit nach ${t.trip.to} (ab ${clock(Math.max(s.dep, this.time))}).${sg ? ` Bitte Ausfahrt ${sg}.` : ""}`;
+      t.radio.push({ t: this.time, from: "tf", text });
+      this.notices.push({ id: this.noticeId++, t: this.time, text, train: t.id });
+      if (this.notices.length > 30) this.notices.shift();
+      this.log(`📻 ${text}`, "warn");
+    }
+  }
   takeOut(t: Train) {
     for (const e of t.body) this.vacate(e);
     t.body = [];

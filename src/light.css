@@ -17,6 +17,8 @@ html.light #log { background: #e7edf3; }
 html.light #log div { background: #e0e7ef; border-left: 3px solid #afbac9; color: #384a5d; }
 html.light #log div.bad { color: #ff6f79; }
 html.light #toast { background: #ecd8dc; border: 1px solid #d2a2a9; color: #ff6f79; }
+html.light #notify .nt { background: #d1dce9f2; border: 1px solid #10a8d5; border-left: 4px solid #10a8d5; box-shadow: 0 8px 24px #ffffff99; }
+html.light #notify .nt .x { color: #5990b8; }
 html.light #card { background: #e1e7eff2; border: 1px solid #bec9d7; box-shadow: 0 10px 30px #ffffff88; }
 html.light #card tr.done td { color: #8796a8; }
 html.light #card tr.cur td { color: #141414; }
