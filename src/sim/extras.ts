@@ -83,6 +83,11 @@ function rng(seed: number) {
   };
 }
 
+export interface SituationItem {
+  id: string; kind: "stoerung" | "bue" | "zug" | "ereignis" | "baustelle" | "fdl" | "wetter"; icon: string; title: string; where: string;
+  effect: string; from?: number; until?: number; planned?: boolean; trains: string[];
+}
+
 export class Extras {
   f: Features = { ...DEFAULT_FEATURES };
   wx: WxKind = "wolkig";
@@ -457,5 +462,116 @@ export class Extras {
       }
     }
     w.connAlerts = w.connAlerts.filter((c) => w.time - c.t < 1200 && w.trains.some((t) => t.id === c.conn));
+  }
+
+  // ---------------- Lagebild für den zweiten Monitor ----------------
+  // Alles, was gerade den Betrieb beeinflusst: Störungen, Baustellen, Ereignisse, vom Fdl angeordnete La und Sperrungen, Wetter.
+  situation(): SituationItem[] {
+    const w = this.w, g = w.g, now = w.time;
+    const out: SituationItem[] = [];
+    const edgeS = (e: number) => {
+      const E = g.edges[e];
+      const a = g.nodes[E.a].s, b = g.nodes[E.b].s;
+      return a !== undefined && b !== undefined ? [Math.min(a, b), Math.max(a, b)] : a !== undefined ? [a, a] : b !== undefined ? [b, b] : null;
+    };
+    const span = (edges: number[]): [number, number] | null => {
+      let lo = Infinity, hi = -Infinity;
+      for (const e of edges) { const r = edgeS(e); if (r) { lo = Math.min(lo, r[0]); hi = Math.max(hi, r[1]); } }
+      return lo <= hi ? [lo, hi] : null;
+    };
+    // Züge, deren restlicher Laufweg den Bereich berührt (oder die schon darin sind)
+    const affected = (edges: number[]): string[] => {
+      const set = new Set(edges);
+      const sp = span(edges);
+      const res: string[] = [];
+      for (const t of w.trains) {
+        if (t.body.some((e) => set.has(e))) { res.push(t.no); continue; }
+        if (!sp) continue;
+        const hs = w.headS(t);
+        const last = t.stops[t.stops.length - 1];
+        const end = t.trip.exitPortal ? t.dir * Infinity : last ? w.stS(last.st) : hs;
+        const lo = Math.min(hs, end), hi = Math.max(hs, end);
+        if (hi >= sp[0] - 50 && lo <= sp[1] + 50 && Math.abs((t.dir > 0 ? sp[0] : sp[1]) - hs) < 20000) res.push(t.no);
+      }
+      return res;
+    };
+    const loc = (edges: number[]) => {
+      const pl = edges.map((e) => g.edges[e].platform).find(Boolean);
+      if (pl) return `${g.stations[pl.st].name}, Gleis ${pl.track}`;
+      const sp = span(edges);
+      if (!sp) return "";
+      const mid = (sp[0] + sp[1]) / 2;
+      const st = Object.entries(g.stations).filter(([c]) => !["FH", "SM"].includes(c)).map(([c, x]) => ({ c, name: x.name, s: x.s ?? 0 })).sort((a, b) => a.s - b.s);
+      const near = st.reduce((p, q) => (Math.abs(q.s - mid) < Math.abs(p.s - mid) ? q : p));
+      if (Math.abs(near.s - mid) < 500) return `Bahnhof ${near.name}`;
+      const before = [...st].reverse().find((x) => x.s <= mid), after = st.find((x) => x.s > mid);
+      return before && after ? `zwischen ${before.name} und ${after.name}` : near.name;
+    };
+    const covered = new Set<number>();
+    for (const x of [...this.sites.filter((s) => s.active), ...this.happenings]) for (const e of x.edges) covered.add(e);
+
+    for (const f of w.faults) {
+      if (f.kind === "event") continue; // als Ereignis unten
+      const base = { id: `f${f.id}`, from: f.from, until: f.until };
+      if (f.kind === "switch") {
+        const n = g.nodes[f.target];
+        out.push({ ...base, kind: "stoerung", icon: "⚠", title: `Weichenstörung ${n.swName ?? ""}`.trim(), where: w.nearStation(n.x),
+          effect: "Die Weiche lässt sich nicht umstellen. Fahrstraßen über diese Weiche gehen nur in ihrer jetzigen Lage, sonst Umweg über andere Gleise.",
+          trains: affected([...n.east, ...n.west]) });
+      } else if (f.kind === "signal") {
+        const sg = w.il.sig(f.target);
+        const n = g.nodes[sg.node];
+        out.push({ ...base, kind: "stoerung", icon: "⚠", title: `Signalstörung ${sg.name}`, where: w.nearStation(n.x),
+          effect: "Das Signal zeigt nur Halt. Züge fahren erst mit Ersatzsignal (Zs1) weiter, danach auf Sicht bis zum nächsten Signal. Jeder Zug verliert so 1 bis 3 Minuten.",
+          trains: w.trains.filter((t) => t.nextSig === f.target).map((t) => t.no) });
+      } else if (f.kind === "bue") {
+        const c = this.crossings.find((x) => x.id === f.target);
+        out.push({ ...base, kind: "bue", icon: "⛔", title: `BÜ gestört: ${c?.name ?? ""}`, where: c ? loc(c.edges) : "",
+          effect: "Die Schranken sind nicht gesichert. Jeder Zug hält vor dem Bahnübergang und fährt mit Schrittgeschwindigkeit darüber, das kostet etwa 1 bis 2 Minuten pro Zug.",
+          trains: c ? affected(c.edges) : [] });
+      } else {
+        const t = w.trains.find((x) => x.id === f.target);
+        out.push({ ...base, kind: "zug", icon: "🚆", title: f.kind === "door" ? `Türstörung ${t?.no ?? ""}` : `Fahrzeugstörung ${t?.no ?? ""}`, where: t ? w.position(t).text : "",
+          effect: f.kind === "door" ? "Der Zug kann nicht abfahren, bis die Tür geschlossen ist. Folgezüge auf diesem Gleis warten." : "Der Zug steht, der Tf sucht den Fehler. Das Gleis ist so lange blockiert, Folgezüge müssen warten oder umgeleitet werden.",
+          trains: t ? [t.no] : [] });
+      }
+    }
+    for (const h of this.happenings) {
+      if (h.until <= now) continue;
+      const blocks = h.edges.some((e) => g.edges[e].closed);
+      out.push({ id: `h${h.id}`, kind: "ereignis", icon: { feuer: "🔥", personen: "🚶", notarzt: "🚑", polizei: "🚓", baum: "🌳", pkw: "🚗" }[h.kind], title: h.text.split(":")[0],
+        where: h.station ? g.stations[h.station].name : loc(h.edges), until: h.until,
+        effect: h.station ? "Der Zug bleibt so lange am Bahnsteig stehen. Das Gleis ist blockiert, Folgezüge auf andere Gleise legen."
+          : blocks ? "Abschnitt gesperrt: keine Fahrstraßen hinein. Züge davor warten oder werden über das andere Gleis (Gegengleis) geführt." : "Fahrt auf Sicht mit höchstens 30 km/h durch den Abschnitt.",
+        trains: h.station ? w.trains.filter((t) => t.fault && t.dwelling && t.stops[t.stopIdx]?.st === h.station).map((t) => t.no) : affected(h.edges) });
+    }
+    for (const x of this.sites) {
+      if (x.until <= now || (!x.active && x.from - now > 3 * 3600)) continue;
+      out.push({ id: `s${x.id}`, kind: "baustelle", icon: "🚧", title: x.text.split(":")[0], where: loc(x.edges), from: x.from, until: x.until, planned: !x.active,
+        effect: x.kind === "la" ? `Langsamfahrstelle ${x.v} km/h. Jeder Zug verliert je nach Länge etwa ${Math.max(1, Math.round(x.edges.reduce((a, e) => a + g.edges[e].len, 0) / 1000))} Minute(n).` : "Bahnsteiggleis gesperrt. Züge mit diesem Regelgleis brauchen eine Gleisänderung (im Zugfenster oder hier in der Dispo).",
+        trains: x.active ? affected(x.edges) : [] });
+    }
+    // vom Fdl angeordnete La und Sperrungen
+    const groups = new Map<string, number[]>();
+    g.edges.forEach((E, i) => {
+      if (covered.has(i) || (!E.slow && !E.closed)) return;
+      if (this.happenings.some((h) => h.prev.has(i)) || this.sites.some((s) => s.active && s.prev.has(i))) return;
+      const k = `${E.closed ? "x" : `v${E.slow}`}|${loc([i])}`;
+      groups.set(k, [...(groups.get(k) ?? []), i]);
+    });
+    for (const [k, edges] of groups) {
+      const closed = k.startsWith("x");
+      const v = closed ? 0 : Number(k.split("|")[0].slice(1));
+      out.push({ id: `p${k}`, kind: "fdl", icon: closed ? "⛔" : "🐢", title: closed ? "Gleissperrung (von dir angeordnet)" : `Langsamfahrstelle ${v} km/h (von dir angeordnet)`, where: loc(edges),
+        effect: closed ? "Keine Fahrstraßen über das gesperrte Gleis. Hebst du die Sperrung im Rechtsklick-Menü auf, ist es sofort wieder frei." : `Züge fahren hier höchstens ${v} km/h, bis du die La im Rechtsklick-Menü aufhebst.`,
+        trains: affected(edges) });
+    }
+    if (this.f.weather && !["klar", "wolkig"].includes(this.wx)) {
+      const W = WX[this.wx];
+      out.push({ id: "wx", kind: "wetter", icon: W.icon, title: W.label, where: "ganzer Bereich", until: isFinite(this.wxUntil) ? this.wxUntil : undefined,
+        effect: W.text + (W.acc < 1 ? ` Anfahren etwa ${Math.round((1 - W.acc) * 100)} % schwächer.` : "") + (W.sw > 1.1 ? " Weichenstörungen häufiger." : "") + (W.sig > 1.1 ? " Signalstörungen häufiger." : ""),
+        trains: [] });
+    }
+    return out;
   }
 }

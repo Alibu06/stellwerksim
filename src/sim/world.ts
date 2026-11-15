@@ -10,6 +10,7 @@ export interface StopState extends TTStop {
   actDep?: number;
   plan?: string; // Regelgleis laut Fahrplan
   disp?: string; // dispositiv angeordnetes Gleis (Gleisänderung)
+  betr?: boolean; // Betriebshalt (z. B. für eine Überholung)
   track?: string; // tatsächlich benutztes Gleis
 }
 
@@ -50,6 +51,7 @@ export interface Train {
   reasonNote?: string;
   extraDwell: number; // Anschluss abwarten (Sekunden, beim nächsten Halt)
   holdFor?: { st: string; sec: number };
+  waitFor?: { st: string; train: number; since?: number; no?: string }; // Überholung abwarten
   shunt?: { edges: number[]; label: string; rev?: ShuntTarget["rev"] }; // laufende Rangierfahrt
   shunted?: boolean; // Anschluss abwarten an bestimmtem Bahnhof (Disposition)
   driver: string; // Name Triebfahrzeugführer/in
@@ -70,6 +72,7 @@ export interface Fault {
   target: number; // Knoten-, Signal- oder Zug-ID
   until: number;
   text: string;
+  from?: number;
 }
 
 // Zugmeldeverfahren mit den Nachbarstellwerken
@@ -609,6 +612,21 @@ export class World {
     // Durchrutschweg hinter dem Bahnsteig nach 30 s Stillstand auflösen, damit die Weichen dahinter frei werden
     if (s.actArr !== undefined && this.time - s.actArr > 30) this.il.releaseOverlapForTrain(t.id);
     if (this.time < t.dwellUntil || t.hold) return;
+    if (t.waitFor && t.waitFor.st === s.st) {
+      const o = this.trains.find((x) => x.id === t.waitFor!.train);
+      const sS = this.g.stations[s.st].s ?? 0;
+      const oStop = o?.stops.find((x) => x.st === s.st);
+      // überholt ist erst, wenn der andere Zug dort abgefahren bzw. ohne Halt durch ist
+      const passed = !o || (oStop ? oStop.done : (this.headS(o) - sS) * o.dir > 400);
+      t.waitFor.since ??= this.time;
+      if (!passed && this.time - t.waitFor.since < 1200) {
+        this.cause(t, `Überholung durch ${o!.no}`, 0.5);
+        return;
+      }
+      if (!passed) this.log(`${t.no}: Überholung in ${this.g.stations[s.st].name} abgebrochen (20 min gewartet)`, "warn");
+      else this.log(`${t.no} wurde in ${this.g.stations[s.st].name} von ${o?.no ?? t.waitFor.no ?? "dem Zug"} überholt und fährt weiter`, "info");
+      t.waitFor = undefined;
+    }
     s.done = true;
     s.actDep = this.time;
     t.delay = Math.max(0, this.time - s.dep);
@@ -1097,6 +1115,13 @@ export class World {
         const stp = t.stops.find((x) => !x.done && x.st === E.platform!.st);
         if (stp?.disp && stp.disp !== E.platform.track) return 1e9; // angeordnetes Gleis abwarten
         if (stp && !stp.disp && stp.plan && stp.plan !== E.platform.track) c += 300; // Regelgleis bevorzugen
+        if (t.waitFor?.st === E.platform.st && !stp?.disp) {
+          // bei angeordneter Überholung nicht das Gleis belegen, das der überholende Zug braucht
+          const o = this.trains.find((x) => x.id === t.waitFor!.train);
+          const os = o?.stops.find((x) => !x.done && x.st === E.platform!.st);
+          const oTrack = o && ((os?.disp ?? os?.plan) ?? this.planTrack(E.platform.st, o.dir, o.trip.line, o.trip.to));
+          if (oTrack === E.platform.track) c += 4000;
+        }
         return c + (p.diverging ? 30 : 0) + this.costAfter(t, E.id, p.dir);
       }
     }
@@ -1160,7 +1185,7 @@ export class World {
   faultCount = 0;
   addFault(kind: Fault["kind"], target: number, until: number, text: string) {
     this.faultCount++;
-    this.faults.push({ id: this.faultId++, kind, target, until, text });
+    this.faults.push({ id: this.faultId++, kind, target, until, text, from: this.time });
     this.log(text, "warn");
   }
 
@@ -1243,6 +1268,13 @@ export class World {
       this.reports.push(r);
       if (!auto) this.log(`Zugmeldung: Fdl ${this.g.portals[trip.entryPortal].label} bietet ${trip.no} an. Annehmen?`, "warn");
     }
+    // abgelehnte Züge bietet der Nachbar später erneut an
+    for (const r of this.reports) if (r.kind === "in" && r.state === "refused" && r.respondAt && this.time >= r.respondAt) {
+      r.state = "offered";
+      r.respondAt = undefined;
+      r.t = this.time;
+      this.log(`Zugmeldung: Fdl ${this.g.portals[r.portal].label} bietet ${r.no} erneut an`, "warn");
+    }
     // Ausfahrende Züge dem Nachbarn anbieten
     for (const t of this.trains) {
       const ex = t.trip.exitPortal;
@@ -1276,6 +1308,17 @@ export class World {
     }
   }
 
+  refuseReport(id: number, why: string): string | null {
+    const r = this.reports.find((x) => x.id === id);
+    if (!r || r.kind !== "in" || r.state !== "offered") return "Meldung nicht mehr offen";
+    r.state = "refused";
+    r.note = why;
+    r.respondAt = this.time + 180;
+    r.t = this.time;
+    this.log(`Zugmeldung: ${r.no} von ${this.g.portals[r.portal].label} abgelehnt (${why}), Nachbar bietet in 3 min erneut an`, "info");
+    return null;
+  }
+
   outAccepted(t: Train): boolean {
     return this.reports.some((r) => r.trip === t.trip && r.kind === "out" && r.state === "accepted");
   }
@@ -1286,6 +1329,81 @@ export class World {
     r.state = "accepted";
     r.t = this.time;
     this.log(`Zugmeldung: ${r.no} von ${this.g.portals[r.portal].label} angenommen`, "info");
+    return null;
+  }
+
+  // ---------------- Dispositive Maßnahmen ----------------
+  stS(st: string) { return this.g.stations[st].s ?? 0; }
+
+  // Bahnhöfe, in denen der Zug vorzeitig wenden kann (Halt liegt vor dem Ziel und im Rückfahrplan)
+  shortTurnOptions(t: Train): string[] {
+    const nx = t.trip.turnInto;
+    const rest = t.stops.slice(t.stopIdx, t.stops.length - (t.trip.exitPortal ? 0 : 1)).filter((x) => !x.done && !x.betr);
+    const big = (st: string) => this.platformTracks(st).length >= 2;
+    return rest.filter((x) => big(x.st) && (!nx || nx.dir === t.dir || nx.stops.some((y) => y.st === x.st))).map((x) => x.st);
+  }
+
+  shortTurn(trainId: number, st: string): string | null {
+    const t = this.trains.find((x) => x.id === trainId);
+    if (!t) return "Zug nicht im Bereich";
+    if (!this.shortTurnOptions(t).includes(st)) return "Dort ist keine vorzeitige Wende möglich";
+    const i = t.stops.findIndex((x, k) => k >= t.stopIdx && x.st === st);
+    const ti = t.trip.stops.findIndex((x) => x.st === st);
+    const name = this.g.stations[st].name;
+    const old = t.trip;
+    const nx = old.turnInto && old.turnInto.dir !== old.dir ? old.turnInto : undefined;
+    const trip: TripSpec = { ...old, stops: old.stops.slice(0, ti + 1), exitPortal: undefined, to: name, turnInto: undefined };
+    if (nx) {
+      const j = nx.stops.findIndex((x) => x.st === st);
+      trip.turnInto = { ...nx, stops: nx.stops.slice(j), entryPortal: undefined, from: name, turnedFrom: trip };
+    }
+    t.trip = trip;
+    t.stops = t.stops.slice(0, i + 1);
+    this.log(nx ? `Disposition: ${t.no} wendet vorzeitig in ${name} und fährt als ${nx.no} zurück (Halte dahinter entfallen)` : `Disposition: ${t.no} endet vorzeitig in ${name} (Teilausfall)`, "warn");
+    return null;
+  }
+
+  cancelTrip(key: number): string | null {
+    const trip = this.pending.find((x) => x.key === key);
+    if (!trip) return "Zug ist schon unterwegs oder nicht gefunden";
+    this.pending = this.pending.filter((x) => x !== trip);
+    this.reports = this.reports.filter((r) => r.trip !== trip);
+    this.log(`Disposition: ${trip.no} (${trip.from} → ${trip.to}) fällt aus`, "warn");
+    return null;
+  }
+
+  // Bahnhöfe mit mindestens drei Bahnsteiggleisen, in denen ein Zug überholt werden kann
+  overtakeStations(t: Train): string[] {
+    const hs = this.headS(t);
+    return Object.keys(this.g.stations).filter((st) => this.platformTracks(st).length >= 3 && (this.stS(st) - hs) * t.dir > 300 && (this.stS(st) - hs) * t.dir < 30000);
+  }
+  // Züge, die t überholen könnten: gleiche Richtung, dahinter
+  overtakers(t: Train): Train[] {
+    const hs = this.headS(t);
+    return this.trains.filter((o) => o !== t && o.dir === t.dir && (hs - this.headS(o)) * t.dir > 0 && (hs - this.headS(o)) * t.dir < 25000 && this.passesBeyond(o, hs + 2000 * t.dir));
+  }
+  // fährt der Zug in seiner jetzigen Richtung noch über den Streckenpunkt s hinaus (endet/wendet nicht vorher)?
+  passesBeyond(o: Train, s: number): boolean {
+    if (o.trip.exitPortal) return true;
+    const last = o.stops[o.stops.length - 1];
+    return !!last && (this.stS(last.st) - s) * o.dir > 300;
+  }
+
+  overtake(trainId: number, st: string, otherId: number): string | null {
+    const t = this.trains.find((x) => x.id === trainId), o = this.trains.find((x) => x.id === otherId);
+    if (!t || !o) return "Zug nicht im Bereich";
+    if (!this.overtakeStations(t).includes(st)) return "Überholung dort nicht möglich";
+    if (!this.passesBeyond(o, this.stS(st))) return `${o.no} endet oder wendet vor ${this.g.stations[st].name} und kann dort nicht überholen`;
+    let stop = t.stops.find((x, k) => k >= t.stopIdx && x.st === st && !x.done);
+    if (!stop) {
+      const eta = this.time + Math.abs(this.stS(st) - this.headS(t)) / Math.max(8, t.v);
+      stop = { st, arr: eta, dep: eta, done: false, betr: true };
+      let k = t.stopIdx;
+      while (k < t.stops.length && (this.stS(t.stops[k].st) - this.stS(st)) * t.dir < 0) k++;
+      t.stops.splice(k, 0, stop);
+    }
+    t.waitFor = { st, train: otherId, no: o.no };
+    this.log(`Disposition: ${t.no} wird in ${this.g.stations[st].name} von ${o.no} überholt`, "info");
     return null;
   }
 
@@ -1317,7 +1435,15 @@ export class World {
 
   // ---------------- Gleisänderung (Disposition) ----------------
   dispTrack = new Map<string, string>(); // "Fahrt-Schlüssel|Bahnhof" -> Gleis
+  private ptCache = new Map<string, { track: string; len: number }[]>();
   platformTracks(st: string): { track: string; len: number }[] {
+    const c = this.ptCache.get(st);
+    if (c) return c;
+    const r = this.platformTracksRaw(st);
+    this.ptCache.set(st, r);
+    return r;
+  }
+  private platformTracksRaw(st: string): { track: string; len: number }[] {
     const m = new Map<string, number>();
     for (const e of this.g.edges) if (e.platform?.st === st) m.set(e.platform.track, Math.max(m.get(e.platform.track) ?? 0, e.len));
     return [...m].map(([track, len]) => ({ track, len })).sort((a, b) => (parseInt(a.track) || 99) - (parseInt(b.track) || 99));
@@ -1430,7 +1556,7 @@ export class World {
       else if (t.nextSig && !this.il.proceeds(this.il.sig(t.nextSig), this.time)) out.push({ text: `Abfahrbereit, wartet auf Ausfahrt ${this.il.sig(t.nextSig).name}`, kind: "warn" });
       else out.push({ text: "Abfahrbereit", kind: "ok" });
     } else if (t.v < 0.1) {
-      if (t.nextSig && t.distNextSig < 60) out.push({ text: `Steht vor Halt zeigendem Signal ${this.il.sig(t.nextSig).name} seit ${Math.floor(t.waitRed / 60)}:${String(Math.floor(t.waitRed % 60)).padStart(2, "0")}`, kind: t.waitRed > 120 ? "bad" : "warn" });
+      if (t.nextSig && t.distNextSig < 60) out.push({ text: `Steht vor Halt zeigendem Signal ${this.il.sig(t.nextSig).name} ${t.waitRed < 60 ? "(gerade eben)" : `seit ${Math.floor(t.waitRed / 60)} min`}`, kind: t.waitRed > 120 ? "bad" : "warn" });
       else out.push({ text: "Steht", kind: "warn" });
     } else {
       out.push({ text: `Fährt ${Math.round(t.v * 3.6)} km/h (zulässig ${Math.round(Math.min(t.vmax * 3.6, vEdge(E)))})`, kind: "ok" });

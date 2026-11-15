@@ -17,17 +17,25 @@
       <section id="board">
         <div class="head"><select id="station"></select>
           <div class="seg"><button data-m="dep" class="on">Abfahrt</button><button data-m="arr">Ankunft</button></div></div>
-        <table id="boardTab"></table>
+        <div class="scroll"><table id="boardTab"></table></div>
       </section>
-      <section id="graph"><div class="head"><b>Bildfahrplan</b> <span class="hint">gestrichelt = Plan, durchgezogen = Ist</span>
+      <section id="graph"><div class="head"><b>Bildfahrplan</b> <span class="hint">gestrichelt = Plan, durchgezogen = Ist, dünn = Prognose · Zug anklicken</span>
         <div class="seg"><button data-r="60">1 h</button><button data-r="120" class="on">2 h</button><button data-r="240">4 h</button></div></div>
-        <canvas id="cv"></canvas></section>
+        <canvas id="cv"></canvas><div id="gtip" class="hidden"></div></section>
       <section id="side">
-        <h3>Zugmeldungen</h3><div id="reports"></div>
-        <h3>Störungen</h3><div id="faults"></div>
-        <h3>Meldungen</h3><div id="events"></div>
+        <nav class="mtabs">
+          <button data-tab="lage" class="on">Lage <i id="nLage"></i></button>
+          <button data-tab="dispo">Dispo <i id="nDispo"></i></button>
+          <button data-tab="funk">Funk</button>
+          <button data-tab="log">Meldungen</button>
+        </nav>
+        <div class="pane" id="p-lage"></div>
+        <div class="pane hidden" id="p-dispo"></div>
+        <div class="pane hidden" id="p-funk"></div>
+        <div class="pane hidden" id="p-log"></div>
       </section>
     </main>
+    <div id="mtoast"></div>
     <script type="module" src="/src/monitor.ts"></script>
   </body>
 </html>

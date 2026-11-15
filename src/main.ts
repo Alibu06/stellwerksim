@@ -568,7 +568,7 @@ async function boot() {
     { title: "Rechtsklick-Menü", text: "Klicke mit der rechten Maustaste auf ein Signal, eine Weiche, ein Gleis oder einen Zug. Dort findest du Fahrstraße zurücknehmen, Ersatzsignal, Langsamfahrstelle, Gleissperrung, Funk, Anschluss abwarten und Rangieren.", target: "#cv", done: () => flags.ctx },
     { title: "Zeitraffer", text: "Oben stellst du die Geschwindigkeit ein. Probier 4× aus. Mit ❚❚ oder der Leertaste pausierst du.", target: "#speed", done: () => flags.fast },
     { title: "Störungen und Ereignisse", text: "Im Reiter „Störungen“ stehen gestörte Weichen und Signale, Bahnübergänge, Baustellen, Ereignisse wie Feuerwehreinsätze und gefährdete Anschlüsse. Bei einer Signalstörung gibst du ein Ersatzsignal (Strg + Klick auf das Signal).", target: '.tabs button[data-tab="faults"]', enter: () => tabBtn("faults").click() },
-    { title: "Zweiter Monitor und Bericht", text: "🖥 Monitor öffnet ein eigenes Fenster mit Abfahrtstafel (Soll, Prognose, Ist) und Bildfahrplan, ideal für einen zweiten Bildschirm. 💾 speichert den Dienst, 🏁 Bericht zeigt die Schichtauswertung mit Verspätungsursachen.", target: "#monBtn" },
+    { title: "Zweiter Monitor und Bericht", text: "🖥 Monitor öffnet ein eigenes Fenster für den zweiten Bildschirm: Abfahrtstafel, klickbarer Bildfahrplan, Lage (alle Störungen, Baustellen und Ereignisse mit Auswirkung und Dauer), Dispo (Zugmeldungen, Anschlüsse, Gleisänderung, Wenden, Überholen, Ausfall) und Funk. 💾 speichert den Dienst, 🏁 Bericht zeigt die Schichtauswertung mit Verspätungsursachen.", target: "#monBtn" },
     { title: "Los geht's", text: "Das war's. Alle Erklärungen findest du jederzeit unter „Hilfe“, dort kannst du das Tutorial auch neu starten. Gute Schicht!", enter: () => tabBtn("help").click() },
   ], (p) => (view.mark = p));
   $("tutBtn").onclick = () => { centered = false; tut.start(); };
@@ -577,11 +577,44 @@ async function boot() {
   // ---------- Zweiter Monitor ----------
   const ch = new BroadcastChannel(CHANNEL);
   const sendSnap = () => ch.postMessage({ type: "snap", snap: makeSnapshot(w, g) });
+  // Befehle vom zweiten Monitor (Dispo, Zugmeldungen, Funk)
+  const monCmd = (d: any): string | null => {
+    const tr = () => w.trains.find((t) => t.id === Number(d.id));
+    switch (d.c) {
+      case "accept": return w.acceptReport(Number(d.id));
+      case "refuse": return w.refuseReport(Number(d.id), String(d.why || "betriebliche Gründe"));
+      case "hold": return w.holdConnection(Number(d.id));
+      case "drop": w.dropConnection(Number(d.id)); return null;
+      case "track": return w.setTrack(Number(d.key), String(d.st), d.track || undefined);
+      case "shortTurn": return w.shortTurn(Number(d.id), String(d.st));
+      case "cancel": return w.cancelTrip(Number(d.key));
+      case "overtake": return w.overtake(Number(d.id), String(d.st), Number(d.other));
+      case "radio": {
+        const t = tr();
+        if (!t) return "Zug nicht mehr im Bereich";
+        radio(w, t, String(d.text), d.cmd || undefined);
+        return null;
+      }
+      case "focus": {
+        const t = tr();
+        if (!t) return "Zug nicht im Bereich";
+        showTrain(t);
+        const ed = g.edges[t.body[t.body.length - 1]];
+        view.centerOn(g.nodes[ed.a].x, g.nodes[ed.a].y);
+        window.focus();
+        return null;
+      }
+    }
+    return "Unbekannter Befehl";
+  };
   ch.onmessage = (e) => {
-    if (e.data?.type === "hello") sendSnap();
-    if (e.data?.type === "accept") {
-      const why = w.acceptReport(Number(e.data.id));
-      if (why) toast(why);
+    const d = e.data;
+    if (d?.type === "hello") sendSnap();
+    if (d?.type === "accept") { const why = w.acceptReport(Number(d.id)); if (why) toast(why); sendSnap(); }
+    if (d?.type === "cmd") {
+      let why: string | null;
+      try { why = monCmd(d); } catch (err) { why = String(err); }
+      ch.postMessage({ type: "ack", n: d.n, ok: !why, text: why ?? "" });
       sendSnap();
     }
   };
